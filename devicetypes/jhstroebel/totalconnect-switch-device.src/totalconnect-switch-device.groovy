@@ -1,5 +1,5 @@
 /**
- *	TotalConnect Switch API
+ *	TotalConnect Switch Device API
  *
  *	Code is slightly modified for a Garage Door Automation Device, but almost no code is original
  *	Copyright 2015 Brian Wilson 
@@ -41,7 +41,6 @@ metadata {
 	capability "Switch"
     //capability "Garage Door Control"
     attribute "status", "string"
-    command "getDeviceId"
 }
 
 simulator {
@@ -134,12 +133,7 @@ def controlSwitch(int switchAction) {
     logout(token)
 }
 
-def getDeviceId() {
-	String deviceId = settings.deviceId
-    log.debug "Sending DeviceId " + deviceId
-	return deviceId
-}
-
+/* Think this was an attempt to update but used events instead...
 def updateStatus(Integer switchState) {
 	log.debug switchState
 
@@ -153,6 +147,7 @@ def updateStatus(Integer switchState) {
     	log.error "Attempted to update switchState to ${switchState}. Only valid states are 0 or 1."
     }
 }
+*/
 
 def refresh() {
 	def token = login(token)
