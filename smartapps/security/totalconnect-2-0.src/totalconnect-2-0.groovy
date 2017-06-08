@@ -28,7 +28,6 @@
  *                       |                   | fanOn, fanAuto, fanCirculate| thermostatOperatingState — ["cooling", "heating", "pending heat",
  *                       |                   | setThermostatFanMode, auto  | "fan only", "vent economizer", "pending cool", "idle"]
  *  temperatureSensors   | temperature       |                             | <numeric, F or C according to unit>
- *  humiditySensors      | humidity          |                             | <numeric, percent>
  *  alarms               | alarm             | strobe, siren, both, off    | strobe, siren, both, off
  *  valve                | valve             | close, open                 | closed, open
  *  locks                | lock              | lock, unlock                | locked, unlocked
@@ -94,25 +93,12 @@ definition(
 
 preferences {
 	page(name: "Page 1", content: "authPage")
-/*
-	page(name: "Credentials", title:"TotalConnect 2.0 Login", nextPage: "locationSetup", uninstall: true, install:false) {
-    	section ("TotalConnect 2.0 Login Credentials") {
-        	paragraph "Give your Total Connect credentials. Recommended to make another user for SmartThings"
-    		input("userName", "text", title: "Username", description: "Your username for TotalConnect")
-   			input("password", "password", title: "Password", description: "Your Password for TotalConnect", submitOnChange:true)
-		}//section
-        section("Backend TotalConnect 2.0 Values - DO NOT CHANGE", hideable: true, hidden: true) {
-			paragraph "These are required for login:"
-           	input "applicationId", "text", title: "Application ID - It is '14588' currently", description: "Application ID", defaultValue: "14588"
-			input "applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32"
-        }
-    }
-
-    page(name: "locationSetup", content: "locationSetup")
-*/
-	//only runs on first install
+	//dynamic page that has duplicate code with deviceSetup (should be a way to remove, maybe with content: and methods?)
     page(name: "deviceSetup", content: "deviceSetup")
+	//only runs on first install
     page(name: "sensorSetup", content: "sensorSetup")
+	//only runs when sensors are selected, should change to only ask if sensor list has changed?
+
 }
 
 // Start of Page Functions
@@ -204,11 +190,19 @@ def authPage() {
             
             def thermostatMap = getThermostatDevices()
         	def lockMap = getLockDevices()
-     
-    		section("Select from the following Security devices to add in SmartThings.") {
-				input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false
-    	        input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
-        	}
+
+            def hideAlarmOptions = true
+            if(alarmDevice) {
+                hideAlarmOptions = false
+            }//If alarm is selected, expand options
+
+            section("Select from the following Security devices to add in SmartThings.") {
+                input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false, submitOnChange:true
+                input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
+            }//section    
+            section("Alarm Integration Options:", hideable: true, hidden: hideAlarmOptions) {
+                input "shmIntegration", "bool", required: true, title:"Sync alarm status and SHM status", default:false
+            }//section
         	section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
             	input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true
             	input "thermostatDevices", "enum", required:false, title:"Select any Thermostat Devices", multiple:true, options:thermostatMap, hideWhenEmpty:true
@@ -263,29 +257,6 @@ def authPage() {
 }
 */
 
-private locationSetup() {
-	dynamicPage(name:"locationSetup", title:"Pulling up the TotalConnect Location List!", nextPage: "deviceSetup", install: false, uninstall: true) {
-	   	state.token = login()
-        
-        def locations = locationFound()
-
-    	def deviceMap = getDeviceIDs(locations.get(selectedLocation))
-		def options = locations.keySet() as List ?: []
-   		log.debug "Options: " + options
-        
-        section("Select from the following Locations for Total Connect.", hideable: true, hidden: hideLocation) {
-			input "selectedLocation", "enum", required:true, title:"Select the Location", multiple:false, submitOnChange:true, options:options
-       	}//section
-           
-        //Backend Values (at bottom)
-       	section("Backend TotalConnect 2.0 Values - DO NOT CHANGE", hideable: true, hidden: true) {
-           	input "locationId", "text", title: "Location ID - Do not change", description: "Location ID", defaultValue: locations?.get(selectedLocation) ?: ""
-			input "securityDeviceId", "text", title: "Security Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("Security Panel")
-       	   	input "automationDeviceId", "text", title: "Automation Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("Automation")
-		}//section
-	}  
-}
-
 private deviceSetup() {
 	def nextPage = null //default to no, assuming no sensors
     def install = true //default to true to allow install with no sensors
@@ -302,23 +273,27 @@ private deviceSetup() {
 			nextPage = null
 			install = true
 		} //only set nextPage if sensors are selected (and disable install)
-		
-        //def zoneMap = getSecurityZones()
-       	//New code to replace above...
+
 		discoverSensors() //have to find zone sensors first
 		def zoneMap = sensorsDiscovered()
-           
-		//def automationMap = getAutomationDevices()
-       	//New code to replace above...
+        
 		discoverSwitches() //have to find switches first
 		def automationMap = switchesDiscovered()
         
         def thermostatMap = getThermostatDevices()
         def lockMap = getLockDevices()
         
+        def hideAlarmOptions = true
+        if(alarmDevice) {
+        	hideAlarmOptions = false
+        }//If alarm is selected, expand options
+        
     	section("Select from the following Security devices to add in SmartThings.") {
-			input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false
+			input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false, submitOnChange:true
             input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
+        }//section    
+        section("Alarm Integration Options:", hideable: true, hidden: hideAlarmOptions) {
+        	input "shmIntegration", "bool", required: true, title:"Sync alarm status and SHM status", default:false
         }//section
         section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
             input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true
@@ -476,8 +451,6 @@ Map getSecurityZones() {
 
 // Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
 def discoverSwitches() {
-    //String switchName
-    //String switchID
     def switches = [:]
 	
 	def getAllAutomationDeviceStatusEx = [
@@ -675,8 +648,11 @@ def initialize() {
     
     //Send Keep Alive and test token every 3 minutes.  Well inside the tested 4.5+ min expiration
     schedule("0 0/3 * 1/1 * ? *", keepAlive)
-	
-   	if (zoneDevices) {
+	if (settings.alarmDevice && settings.alarmIntegration) {
+        subscribe(location, checkMode)
+        //subscribe(alarmPanel, checkAlarmMode) //Check for changes to alarm and set SHM
+    }//if alarm enabled & smh integration enabled
+   	if (automationDevices) {
 //		updateSensorTypes() //update sensor types to preference values instead of null defaults before we add devices - maybe a bad idea
     	addDevices()
     }//addDevices if we have any
@@ -717,6 +693,29 @@ private removeChildDevices(delete) {
     }
 }
 
+// ***********
+// Handlers
+// ***********
+
+// Logic for Triggers based on mode change of SmartThings
+def checkMode(evt) {
+    	if (evt.value == "Away") {
+            	log.debug "Mode is set to Away, Performing ArmAway"
+            	//armAway()   
+		}//if mode changes to Away
+        else if (evt.value == "Night") {
+            	log.debug "Mode is set to Night, Performing ArmStay"
+            	//armStay()
+		}//if mode changes to Night
+        else if (evt.value == "Home") {
+            	log.debug "Mode is set to Home, Performing Disarm"
+            	//disarm()
+        }//if mode changes to Home
+}//checkMode(evt)
+
+
+
+//Child Devices
 def addDevices() {
         def deviceId
         def deviceName
@@ -746,18 +745,19 @@ def addDevices() {
             def d = getChildDevice(dni)
             if(!d) {
             	def newSwitch
-                newSwitch = sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }
-                if("${newSensor?.value.type}" == "1") {
-					d = addChildDevice("jhstroebel", "TotalConnect Switch", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+                newSwitch = switches.find { ("TC-${settings.automationDeviceId}-${it.value.id}") == dni }
+                if("${newSwitch?.value.type}" == "1") {
+					d = addChildDevice("jhstroebel", "TotalConnect Switch", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSwitch?.value.name}", completedSetup: true])
 				}
-                if("${newSensor?.value.type}" == "2") {
-					d = addChildDevice("jhstroebel", "TotalConnect Dimmer", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+                if("${newSwitch?.value.type}" == "2") {
+					d = addChildDevice("jhstroebel", "TotalConnect Dimmer", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSwitch?.value.name}", completedSetup: true])
                 }
-				if("${newSensor?.value.type}" == "3") {
-					d = addChildDevice("jhstroebel", "TotalConnect Garage Door", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+				if("${newSwitch?.value.type}" == "3") {
+					d = addChildDevice("jhstroebel", "TotalConnect Garage Door", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSwitch?.value.name}", completedSetup: true])
                 }
 			}//if it doesn't already exist
        	}//for each selected sensor
+
 /* Not yet implemented
         state.thermostats = [:]
         settings.thermostatDevices.each {
@@ -772,17 +772,10 @@ def addDevices() {
             state.locks.put(deviceId, deviceName) //builds map of lock devices
        	}
 */
+
 }//addDevices()
 
-/*
-settings.devices.each {deviceId->
-    def device = state.devices.find{it.id==deviceId}
-      if (device) {
-        def childDevice = addChildDevice("smartthings", "Device Name", deviceId, null, [name: "Device.${deviceId}", label: device.name, completedSetup: true])
-  }
-}
-*/
-
+// Alarm Code from Original TC2.0 App that changes with mode
 /* Subscribe to changes in mode and change alarm mode
 def installed() {
 	//log.debug "Installed with settings: ${settings}"
