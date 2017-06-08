@@ -18,17 +18,7 @@
  */
 
 preferences {
-	// See above ST thread above on how to configure the user/password.	 Make sure the usercode is configured
-	// for whatever account you setup. That way, arming/disarming/etc can be done without passing a user code.
-	input("userName", "text", title: "Username", description: "Your username for TotalConnect")
-	input("password", "password", title: "Password", description: "Your Password for TotalConnect")
-	// get this info by using https://github.com/mhatrey/TotalConnect/blob/master/TotalConnectTester.groovy 
-	input("deviceId", "text", title: "Device ID - You'll have to look up", description: "Device ID")
-	// get this info by using https://github.com/mhatrey/TotalConnect/blob/master/TotalConnectTester.groovy 
-	input("locationId", "text", title: "Location ID - You'll have to look up", description: "Location ID")
-	input("applicationId", "text", title: "Application ID - It is '14588' currently", description: "Application ID", defaultValue: "14588")
-	input("applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32")
-	input("zoneID", type: "number", title: "Zone ID - You'll have to look up", description: "Zone ID")
+	//Set preferences here?
 }
 metadata {
 	definition (name: "TotalConnect Contact Sensor", namespace: "jhstroebel", author: "QCCowboy") {
@@ -70,57 +60,6 @@ metadata {
 // 8 – Trouble
 // 16 – Tampered
 // 32 – Supervision Failed
-
-// Login Function. Returns SessionID for rest of the functions
-def login(token) {
-	log.debug "Executed login"
-	def paramsLogin = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
-		body: [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-	]
-	httpPost(paramsLogin) { responseLogin ->
-		token = responseLogin.data.SessionID 
-	}
-	return token
-} // Returns token		
-
-// Logout Function. Called after every mutational command. Ensures the current user is always logged Out.
-def logout(token) {
-	//log.debug "During logout - ${token}"
-	def paramsLogout = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Logout",
-		body: [SessionID: token]
-	]
-	httpPost(paramsLogout) { responseLogout ->
-		log.debug "Smart Things has successfully logged out"
-	}  
-}
-
-// Gets Zone Metadata. Takes token & location ID as an argument
-Map zoneMetaData(token, locationId) {
-	def tczones = [:]
-	String zoneID
-	String zoneStatus
-	String zoneName
-	def getPanelMetaDataAndFullStatusEx = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatusEx",
-		body: [SessionID: token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
-	]
-	httpPost(getPanelMetaDataAndFullStatusEx) { responseSession -> 
-        responseSession.data.PanelMetadataAndStatus.Zones.ZoneInfo.each
-        {
-			ZoneInfo ->
-				zoneID = ZoneInfo.'@ZoneID'
-				zoneStatus = ZoneInfo.'@ZoneStatus'
-				zoneName = ZoneInfo.'@ZoneDescription'
-//              log.debug "ZoneID: ${zoneID}, ZoneStatus: ${zoneStatus}, ZoneName: ${zoneName}"
-				tczones.put(zoneID, zoneStatus)
-        }
-        
-        log.debug tczones
-    }
-	return tczones
-} //Should return zone information
 
 def refresh() {		   
 	def token = login(token)

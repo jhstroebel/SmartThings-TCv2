@@ -18,17 +18,7 @@
  */
 
 preferences {
-	// See above ST thread above on how to configure the user/password.	 Make sure the usercode is configured
-	// for whatever account you setup. That way, arming/disarming/etc can be done without passing a user code.
-	input("userName", "text", title: "Username", description: "Your username for TotalConnect")
-	input("password", "password", title: "Password", description: "Your Password for TotalConnect")
-	// get this info by using https://github.com/mhatrey/TotalConnect/blob/master/TotalConnectTester.groovy 
-	input("deviceId", "text", title: "Device ID - You'll have to look up", description: "Device ID")
-	// get this info by using https://github.com/mhatrey/TotalConnect/blob/master/TotalConnectTester.groovy 
-	input("locationId", "text", title: "Location ID - You'll have to look up", description: "Location ID")
-	input("applicationId", "text", title: "Application ID - It is '14588' currently", description: "Application ID", defaultValue: "14588")
-	input("applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32")
-	input("zoneID", type: "number", title: "Zone ID - You'll have to look up", description: "Zone ID")
+	// Preferences go here
 }
 metadata {
 	definition (name: "TotalConnect Motion Sensor", namespace: "jhstroebel", author: "QCCowboy") {
