@@ -112,6 +112,7 @@ preferences {
 */
 	//only runs on first install
     page(name: "deviceSetup", content: "deviceSetup")
+    page(name: "sensorSetup", content: "sensorSetup")
 }
 
 // Start of Page Functions
@@ -174,15 +175,39 @@ def authPage() {
 
 		}//dynamicPage, Only show this page if missing authentication
 	} else {
-    	dynamicPage(name:"Page 1", title:"Pulling up the TotalConnect Device List!",install: true, uninstall: true) {
-	    	def zoneMap = getSecurityZones()
-        	def automationMap = getAutomationDevices()
-        	def thermostatMap = getThermostatDevices()
+    	//Variables to trigger sensor setup if we have sensors selected
+        def nextPage = null //default to no, assuming no sensors
+        def install = true //default to true to allow install with no sensors
+        if(zoneDevices) {
+        	nextPage = "sensorSetup"
+           	install = false
+        }//if we have sensors, make us go to sensorSetup
+        
+        dynamicPage(name:"Page 1", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
+			if(zoneDevices) {
+        		nextPage = "sensorSetup"
+            	install = false
+        	} else {
+            	nextPage = null
+                install = true
+            } //only set nextPage if sensors are selected (and disable install)
+            
+            //def zoneMap = getSecurityZones()
+			//New code to replace above...
+			discoverSensors() //have to find zone sensors first
+			def zoneMap = sensorsDiscovered()
+
+			//def automationMap = getAutomationDevices()
+			//New code to replace above...
+			discoverSwitches() //have to find switches first
+			def automationMap = switchesDiscovered()
+            
+            def thermostatMap = getThermostatDevices()
         	def lockMap = getLockDevices()
      
     		section("Select from the following Security devices to add in SmartThings.") {
 				input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false
-    	        input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, options:zoneMap
+    	        input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
         	}
         	section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
             	input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true
@@ -262,25 +287,62 @@ private locationSetup() {
 }
 
 private deviceSetup() {
-	dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!", install: true, uninstall: true) {
-	    def zoneMap = getSecurityZones()
-        def automationMap = getAutomationDevices()
+	def nextPage = null //default to no, assuming no sensors
+    def install = true //default to true to allow install with no sensors
+	if(zoneDevices) {
+      	nextPage = "sensorSetup"
+		install = false
+	}//if we have sensors, make us go to sensorSetup
+        
+	dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
+		if(zoneDevices) {
+			nextPage = "sensorSetup"
+			install = false
+		} else {
+			nextPage = null
+			install = true
+		} //only set nextPage if sensors are selected (and disable install)
+		
+        //def zoneMap = getSecurityZones()
+       	//New code to replace above...
+		discoverSensors() //have to find zone sensors first
+		def zoneMap = sensorsDiscovered()
+           
+		//def automationMap = getAutomationDevices()
+       	//New code to replace above...
+		discoverSwitches() //have to find switches first
+		def automationMap = switchesDiscovered()
+        
         def thermostatMap = getThermostatDevices()
         def lockMap = getLockDevices()
         
     	section("Select from the following Security devices to add in SmartThings.") {
 			input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false
-            input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, options:zoneMap
-        }
+            input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
+        }//section
         section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
             input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true
             input "thermostatDevices", "enum", required:false, title:"Select any Thermostat Devices", multiple:true, options:thermostatMap, hideWhenEmpty:true
             input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockMap, hideWhenEmpty:true
-        }
+        }//section
        
         state.firstRun = false //this page only runs for initial devices setup, after that is done, set firstRun to false to skip Login Preferences
-	}
-}
+	}//dynamicpage
+}//lots of duplicated code from the above authPage()...
+
+private sensorSetup() {
+	dynamicPage(name:"sensorSetup", title:"Configure Sensor Types", install: true, uninstall: true) {
+        def options = ["contactSensor", "motionSensor"] //sensor options
+        
+    	section("Select a sensor type for each sensor") {
+        	settings.zoneDevices.each { dni ->
+                input "${dni}_zoneType", "enum", required:true, title:"${state.sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }?.value.name}", multiple:false, options:options
+            }//iterate through selected sensors to get sensor type
+		}//section
+	}//dynamicPage
+    
+    //rely on initialization to set sensor types before adding devices
+}//sensorSetup()
 
 Map locationFound() {
     log.debug "Executed location function during Setup"
@@ -342,7 +404,53 @@ Map getDeviceIDs(targetLocationId) {
   	return deviceMap
 } // Should return Map of Devices associated to the given location
 
-// Gets Security Zones (Name & ZoneID)
+def discoverSensors() {
+    def sensors = [:]
+	
+	def getPanelMetaDataAndFullStatusEx = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatusEx",
+		body: [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
+	]
+	httpPost(getPanelMetaDataAndFullStatusEx) { responseSession -> 
+		responseSession.data.PanelMetadataAndStatus.Zones.ZoneInfo.each { ZoneInfo ->
+			//zoneID = ZoneInfo.'@ZoneID'
+			//zoneName = ZoneInfo.'@ZoneDescription'
+            //zoneType //needs to come from input
+			sensors[ZoneInfo.'@ZoneID'] = [id: "${ZoneInfo.'@ZoneID'}", name: "${ZoneInfo.'@ZoneDescription'}"]
+		}//iterate through zones				
+	}//response captured
+
+	log.debug "TotalConnect2.0 SM:  ${sensors.size()} sensors found"
+    log.debug sensors
+
+	state.sensors = sensors
+} //Should discover sensor information and save to state (unsure how to define type of sensor yet...)
+
+Map sensorsDiscovered() {
+	def sensors =  state.sensors //needs some error checking likely
+	def map = [:]
+
+	sensors.each {
+			def value = "${it?.value?.name}"
+			def key = "TC-${settings.securityDeviceId}-${it?.value?.id}" //Sets DeviceID to "TC-${SecurityID}-${ZoneID}.  Follows format of Harmony activites
+			map[key] = value
+	}//iterate through discovered sensors to find value
+    
+    log.debug "Sensors Options: " + map
+	return map
+}//returns list of sensors for preferences page
+
+def updateSensorTypes() {
+    //set sensor type
+    settings.zoneDevices.each { dni ->
+		log.debug settings["${dni}_zoneType"]
+        state.sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }?.value.type = settings["${dni}_zoneType"]
+	}//Set type for each sensor after defined
+    
+    log.debug "Sensors after type: " + state.sensors
+}//updates sensors with types from preferences (places in state as fact, probably not a good plan)
+
+// Gets Security Zones (Name & ZoneID) - Depricated by above methods
 Map getSecurityZones() {
     String zoneName
     String zoneID
@@ -366,7 +474,49 @@ Map getSecurityZones() {
   	return zoneMap
 } //Should return zone information
 
-// Gets Automation Devices (Name & SwitchID)
+// Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
+def discoverSwitches() {
+    //String switchName
+    //String switchID
+    def switches = [:]
+	
+	def getAllAutomationDeviceStatusEx = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetAllAutomationDeviceStatusEx",
+		body: [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: '']
+	]
+	httpPost(getAllAutomationDeviceStatusEx) { responseSession -> 
+    	responseSession.data.AutomationData.AutomationSwitch.SwitchInfo.each { SwitchInfo ->
+			//switchID = SwitchInfo.SwitchID
+			//switchName = SwitchInfo.SwitchName
+			//switchType = SwitchInfo.SwitchType
+			//switchIcon = SwitchInfo.SwitchIconID // 0-Light, 1-Switch, 255-Garage Door, maybe use for default?
+			//switchState = SwitchInfo.SwitchState // 0-Off, 1-On, maybe set initial value?
+			//switchLevel = SwitchInfo.SwitchLevel // 0-99, maybe to set intial value?
+			switches[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", name: "${SwitchInfo.SwitchName}", type: "${SwitchInfo.SwitchType}"] //use "${var}" to typecast into String
+		}//iterate through Switches				
+	}//response captured
+	log.debug "TotalConnect2.0 SM:  ${switches.size()} switches found"
+    log.debug switches
+
+	state.switches = switches
+} //Should discover switch information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
+
+Map switchesDiscovered() {
+	def switches =  state.switches //needs some error checking likely
+	def map = [:]
+
+	switches.each {
+			def value = "${it?.value?.name}"
+			def key = "TC-${settings.automationDeviceId}-${it?.value?.id}" //Sets DeviceID to "TC-${AutomationID}-${SwitchID}.  Follows format of Harmony activites
+			map[key] = value
+	}//iterate through discovered switches to find value
+    
+    log.debug "Switches Options: " + map
+	return map
+}//returns list of switches for preferences page
+
+
+// Gets Automation Devices (Name & SwitchID) - Depricated by above methods
 Map getAutomationDevices() {
     String switchName
     String switchID
@@ -527,7 +677,8 @@ def initialize() {
     schedule("0 0/3 * 1/1 * ? *", keepAlive)
 	
    	if (zoneDevices) {
-		addDevices()
+//		updateSensorTypes() //update sensor types to preference values instead of null defaults before we add devices - maybe a bad idea
+    	addDevices()
     }//addDevices if we have any
     
 /*    
@@ -570,20 +721,44 @@ def addDevices() {
         def deviceId
         def deviceName
         
-        state.zones = [:]
         log.debug "zoneDevices: " + settings.zoneDevices
-        settings.zoneDevices.each {
-            deviceId = it.key
-            deviceName = it.value
-            state.zones.put(deviceId, deviceName) //builds map of zone devices
-            def childDevice = addChildDevice("jhstroebel", "TotalConnect Open Close Sensor", "TC-{$settings.securityDeviceId}-{$deviceId}", null, [name: "Device.${deviceId}", label: deviceName, completedSetup: true])
-       	}
-        state.switches = [:]
-        settings.automationDevices.each {
-            deviceId = it.key
-            deviceName = it.value
-            state.switches.put(deviceId, deviceName) //builds map of switch devices
-       	}
+        def sensors = state.sensors
+
+		settings.zoneDevices.each { dni ->
+            def d = getChildDevice(dni)
+            if(!d) {
+            	def newSensor
+                newSensor = sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }
+				log.debug "dni: ${dni}, newSensor: ${newSensor}"
+                if(settings["${dni}_zoneType"] == "motionSensor") {
+					d = addChildDevice("jhstroebel", "TotalConnect Motion Sensor", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+				}
+                if(settings["${dni}_zoneType"] == "contactSensor") {
+					d = addChildDevice("jhstroebel", "TotalConnect Contact Sensor", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+                }
+			}//if it doesn't already exist
+       	}//for each selected sensor
+
+        log.debug "automationDevices: " + settings.automationDevices
+        def switches = state.switches
+
+		settings.automationDevices.each { dni ->
+            def d = getChildDevice(dni)
+            if(!d) {
+            	def newSwitch
+                newSwitch = sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }
+                if("${newSensor?.value.type}" == "1") {
+					d = addChildDevice("jhstroebel", "TotalConnect Switch", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+				}
+                if("${newSensor?.value.type}" == "2") {
+					d = addChildDevice("jhstroebel", "TotalConnect Dimmer", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+                }
+				if("${newSensor?.value.type}" == "3") {
+					d = addChildDevice("jhstroebel", "TotalConnect Garage Door", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newSensor?.value.name}", completedSetup: true])
+                }
+			}//if it doesn't already exist
+       	}//for each selected sensor
+/* Not yet implemented
         state.thermostats = [:]
         settings.thermostatDevices.each {
             deviceId = it.key
@@ -596,6 +771,7 @@ def addDevices() {
             deviceName = it.value
             state.locks.put(deviceId, deviceName) //builds map of lock devices
        	}
+*/
 }//addDevices()
 
 /*
