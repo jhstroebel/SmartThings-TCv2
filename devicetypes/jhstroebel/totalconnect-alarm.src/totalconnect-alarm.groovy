@@ -65,14 +65,8 @@ tiles {
 
 // Arm Function. Performs arming function
 def armAway() {		   
-	def token = login(token)
-	def locationId = settings.locationId
-	def deviceId = settings.deviceId			
-	def paramsArm = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
-		body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, ArmType: 0, UserCode: '-1']
-	]
-	httpPost(paramsArm) // Arming Function in away mode
+	parent.armAway(this)
+
 	def metaData = panelMetaData(token, locationId) // Get AlarmCode
 	if (metaData.alarmCode == 10201) {
 		log.debug "Status is: Already Armed Away"
@@ -84,18 +78,11 @@ def armAway() {
 		log.debug "Status is: Arming"
         httpPost(paramsArm) // Arming Function in away mode
     }
-	logout(token)
 }
 
 def armStay() {		   
-	def token = login(token)
-	def locationId = settings.locationId
-	def deviceId = settings.deviceId
-	def paramsArm = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
-		body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, ArmType: 1, UserCode: '-1']
-	]
-	httpPost(paramsArm) // Arming function in stay mode
+	parent.armStay(this)
+
 	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
 	if (metaData.alarmCode == 10203) {
 		log.debug "Status is: Already Armed Stay"
@@ -107,18 +94,11 @@ def armStay() {
 		log.debug "Status is: Arming"
         httpPost(paramsArm) // Arming function in stay mode
     }
-    logout(token)
 }
 
 def disarm() {
-	def token = login(token)
-	def locationId = settings.locationId
-	def deviceId = settings.deviceId
-	def paramsDisarm = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/DisarmSecuritySystem",
-		body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, UserCode: '-1']
-	]
-	httpPost(paramsDisarm)	
+	parent.disarm(this)
+    
 	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
 	if (metaData.alarmCode == 10200) {
 		log.debug "Status is: Already Disarmed"
@@ -127,7 +107,6 @@ def disarm() {
 		log.debug "Status is: Disarming"
 		httpPost(paramsDisarm)	
 	} 
-	logout(token)
 }
 
 def refresh() {		   
