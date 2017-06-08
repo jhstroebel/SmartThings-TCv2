@@ -1,6 +1,24 @@
 /**
  *  TotalConnect
  *
+ *  Version: v0.1
+ *   Changes [June 6th, 2017]
+ *  	- Started from code by mhatrey @ https://github.com/mhatrey/TotalConnect/blob/master/TotalConnect.groovy 	
+ *  	- Modified locationlist to work (as List)
+ *      - Added Autodiscover for Automation and Security Panel DeviceIDs
+ *      - Added Iteration of devices to add (did all automation devices even though I only want a non-zwave garage door)
+ *   	- Removed Success Page (unneccesary)
+ *      
+ *  Future Changes Needed
+ *  	- Modify login to check if successful (doesn't seem to do that now)
+ *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
+ *      - Automation Device (Zwave module, etc) may not exist.  Current code likely doesn't handle that well
+ *      - Implement thermostats & locks
+ *      - Deal with user removing items in settings (adding is fine)
+ *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this
+ *      - Could use post method for all HTTP calls and return XML.  This method could update 
+ *		- Need TotalConnect Thermostat and TotalConnect Lock Device Handlers...
+ *
  *  Copyright 2017 Jeremy Stroebel
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -45,10 +63,25 @@
  *  carbonMonoxide       | humidity          |                             | <numeric, percent>
  *  ---------------------+-------------------+-----------------------------+------------------------------------
  *
+ * General TotalConnect Notes (documenting found and probed values)
+ *
  * Alarm Status
  * 10200 - Disarmed
  * 10203 - Armed Stay
  * 10201 - Armed Away
+ *
+ * Zone Types (By Zone Number)
+ * 1-44 - Normal
+ * 45-47 - Garage Doors (L5200/5210)
+ * 45-48 - Garage Doors (L7000)
+ * 48-64 - Normal
+ * 95 - Fire
+ * 96 - Meidcal
+ * 99 - Police
+ * 140-147 - 4 Button
+ * 148-155 - New (Button Zones)??
+ * 180-185 - Z-Wave Thermostat Zones (L5200/5210)
+ * 180-187 - Z-Wave Thermostat Zones (L7000)
  * 
  * Zone Statuses
  * 0 – Normal
@@ -66,23 +99,37 @@
  * At least a 4.5+ minute token timeout 
  */
 
- /*
- Version: v0.1
- Changes [June 6th, 2017]
-	- Started from code by mhatrey @ https://github.com/mhatrey/TotalConnect/blob/master/TotalConnect.groovy 	
-	- Modified locationlist to work (as List)
-    - Added Autodiscover for Automation and Security Panel DeviceIDs
-    - Added Iteration of devices to add (did all automation devices even though I only want a non-zwave garage door)
- 	- Removed Success Page (unneccesary)
-    
- Future Changes Needed
- 	- Modify login to check if successful (doesn't seem to do that now!)
-    - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
-    - Automation Device (Zwave module, etc) may not exist.  Current code likely doesn't handle that well
-    - Implement thermostats & locks
-    - Deal with user removing items in settings (adding is fine)
+/* Documentation of Settings & State Variables
+ *
+ * Settings Variables:
+ * 
+ * String settings.userName
+ * String settings.password
+ * String settings.selectedLocation
+ * String settings.applicationId
+ * String settings.applicationVersion
+ * String settings.locationId
+ * String settings.securityDeviceId
+ * String settings.automationDeviceId
+ * bool settings.alarmDevice
+ * List? settings.zoneDevices
+ * bool settings.shmIntegration
+ * List? settings.automationDevices
+ * List? settings.thermostatDevices
+ * List? settings.lockDevices
+ * String settings.${Sensor.DeviceID}_zoneType
+ * 
+ * State Variables:
+ * 
+ * String state.token
+ * Long state.tokenRefresh
+ * Map state.sensors
+ * Map state.switches
+ * Map state.thermostats
+ * Map state.locks
+ * 
  */
- 
+
 definition(
     name: "TotalConnect 2.0",
     namespace: "Security",
@@ -94,16 +141,18 @@ definition(
     singleInstance: true)
 
 preferences {
-	page(name: "Page 1", content: "authPage")
+	page(name: "credentials", content: "authPage")
 	//dynamic page that has duplicate code with deviceSetup (should be a way to remove, maybe with content: and methods?)
     page(name: "deviceSetup", content: "deviceSetup")
 	//only runs on first install
     page(name: "sensorSetup", content: "sensorSetup")
 	//only runs when sensors are selected, should change to only ask if sensor list has changed?
-
 }
 
-// Start of Page Functions
+/////////////////////////////////////
+// PREFERENCE PAGES
+/////////////////////////////////////
+
 def authPage() {
 	if (!isTokenValid() && settings.userName != null && settings.password != null) {
 		log.debug "Login Token Does not Exist or is likely invalid - Will attempt Login"
@@ -115,10 +164,10 @@ def authPage() {
        	log.debug "Either Login failed or there are no credentials to attempt login yet"
         state.firstRun == true //this essentially reset credentials if login fails, but backend values will stay set (unknown how to resolve that, can't clear settings)
     }//only show credentials if login failed or there are no credentials yet (need a reset credentials option)
-
+	
 	if(state.firstRun == null || state.firstRun != false) {
     	//Login Credentials
-		dynamicPage(name:"Page 1", title:"TotalConnect 2.0 Login", nextPage: "deviceSetup", uninstall: true, install:false) {
+		dynamicPage(name:"credentials", title:"TotalConnect 2.0 Login", nextPage: "deviceSetup", uninstall: true, install:false) {
         	section ("TotalConnect 2.0 Login Credentials") {
         		paragraph "Give your Total Connect credentials. Recommended to make another user for SmartThings"
     			input("userName", "text", title: "Username", description: "Your username for TotalConnect")
@@ -163,101 +212,9 @@ def authPage() {
 
 		}//dynamicPage, Only show this page if missing authentication
 	} else {
-    	//Variables to trigger sensor setup if we have sensors selected
-        def nextPage = null //default to no, assuming no sensors
-        def install = true //default to true to allow install with no sensors
-        if(zoneDevices) {
-        	nextPage = "sensorSetup"
-           	install = false
-        }//if we have sensors, make us go to sensorSetup
-        
-        dynamicPage(name:"Page 1", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
-			if(zoneDevices) {
-        		nextPage = "sensorSetup"
-            	install = false
-        	} else {
-            	nextPage = null
-                install = true
-            } //only set nextPage if sensors are selected (and disable install)
-            
-            //def zoneMap = getSecurityZones()
-			//New code to replace above...
-			discoverSensors() //have to find zone sensors first
-			def zoneMap = sensorsDiscovered()
-
-			//def automationMap = getAutomationDevices()
-			//New code to replace above...
-			discoverSwitches() //have to find switches first
-			def automationMap = switchesDiscovered()
-            
-            def thermostatMap = getThermostatDevices()
-        	def lockMap = getLockDevices()
-
-            def hideAlarmOptions = true
-            if(alarmDevice) {
-                hideAlarmOptions = false
-            }//If alarm is selected, expand options
-
-            section("Select from the following Security devices to add in SmartThings.") {
-                input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false, submitOnChange:true
-                input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, submitOnChange:true, options:zoneMap
-            }//section    
-            section("Alarm Integration Options:", hideable: true, hidden: hideAlarmOptions) {
-                input "shmIntegration", "bool", required: true, title:"Sync alarm status and SHM status", default:false
-            }//section
-        	section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
-            	input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true
-            	input "thermostatDevices", "enum", required:false, title:"Select any Thermostat Devices", multiple:true, options:thermostatMap, hideWhenEmpty:true
-            	input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockMap, hideWhenEmpty:true
-        	}
-		}//dynamicPage
+		deviceSetup()
 	}//if this isn't the first run, go straight to device setup
 }
-
-/*
-	def description = null
-    if (!state.HarmonyAccessToken) {
-		if (!state.accessToken) {
-			log.debug "Harmony - About to create access token"
-			createAccessToken()
-		}
-        description = "Click to enter Harmony Credentials"
-        def redirectUrl = buildRedirectUrl
-        return dynamicPage(name: "Credentials", title: "Harmony", nextPage: null, uninstall: true, install:false) {
-            section { paragraph title: "Note:", "This device has not been officially tested and certified to “Work with SmartThings”. You can connect it to your SmartThings home but performance may vary and we will not be able to provide support or assistance." }
-            section { href url:redirectUrl, style:"embedded", required:true, title:"Harmony", description:description }
-        }
-    } else {
-		//device discovery request every 5 //25 seconds
-		int deviceRefreshCount = !state.deviceRefreshCount ? 0 : state.deviceRefreshCount as int
-		state.deviceRefreshCount = deviceRefreshCount + 1
-		def refreshInterval = 5
-
-		def huboptions = state.HarmonyHubs ?: []
-		def actoptions = state.HarmonyActivities ?: []
-
-		def numFoundHub = huboptions.size() ?: 0
-    	def numFoundAct = actoptions.size() ?: 0
-
-		if((deviceRefreshCount % 5) == 0) {
-			discoverDevices()
-		}
-
-		return dynamicPage(name:"Credentials", title:"Discovery Started!", nextPage:"", refreshInterval:refreshInterval, install:true, uninstall: true) {
-			section("Please wait while we discover your Harmony Hubs and Activities. Discovery can take five minutes or more, so sit back and relax! Select your device below once discovered.") {
-				input "selectedhubs", "enum", required:false, title:"Select Harmony Hubs (${numFoundHub} found)", multiple:true, submitOnChange: true, options:huboptions
-			}
-      // Virtual activity flag
-      if (numFoundHub > 0 && numFoundAct > 0 && true)
-			section("You can also add activities as virtual switches for other convenient integrations") {
-				input "selectedactivities", "enum", required:false, title:"Select Harmony Activities (${numFoundAct} found)", multiple:true, submitOnChange: true, options:actoptions
-			}
-    if (state.resethub)
-			section("Connection to the hub timed out. Please restart the hub and try again.") {}
-		}
-    }
-}
-*/
 
 private deviceSetup() {
 	def nextPage = null //default to no, assuming no sensors
@@ -267,7 +224,7 @@ private deviceSetup() {
 		install = false
 	}//if we have sensors, make us go to sensorSetup
         
-	dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
+	return dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
 		if(zoneDevices) {
 			nextPage = "sensorSetup"
 			install = false
@@ -283,7 +240,10 @@ private deviceSetup() {
 		def automationMap = switchesDiscovered()
         
         def thermostatMap = getThermostatDevices()
-        def lockMap = getLockDevices()
+
+		//def lockMap = getLockDevices()
+		discoverLocks() //have to find locks first
+		def lockMap = locksDiscovered()
         
         def hideAlarmOptions = true
         if(alarmDevice) {
@@ -303,9 +263,9 @@ private deviceSetup() {
             input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockMap, hideWhenEmpty:true
         }//section
        
-        state.firstRun = false //this page only runs for initial devices setup, after that is done, set firstRun to false to skip Login Preferences
+//        state.firstRun = false //this page only runs for initial devices setup, after that is done, set firstRun to false to skip Login Preferences
 	}//dynamicpage
-}//lots of duplicated code from the above authPage()...
+}//deviceSetup
 
 private sensorSetup() {
 	dynamicPage(name:"sensorSetup", title:"Configure Sensor Types", install: true, uninstall: true) {
@@ -317,9 +277,11 @@ private sensorSetup() {
             }//iterate through selected sensors to get sensor type
 		}//section
 	}//dynamicPage
-    
-    //rely on initialization to set sensor types before adding devices
 }//sensorSetup()
+
+/////////////////////////////////////
+// Setup/Device Discovery Functions
+/////////////////////////////////////
 
 Map locationFound() {
     log.debug "Executed location function during Setup"
@@ -332,14 +294,12 @@ Map locationFound() {
         body: [ SessionID: state.token, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
     					]
    		httpPost(getSessionParams) { responseSession -> 
-        						 responseSession.data.Locations.LocationInfoBasic.each
-        						 {
-        						 	LocationInfoBasic ->
-        						 	locationName = LocationInfoBasic.LocationName
-                                    locationId = LocationInfoBasic.LocationID
-        						 	locationMap["${locationName}"] = "${locationId}"
-        						 }    							
-    				}
+			responseSession.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
+				locationName = LocationInfoBasic.LocationName
+				locationId = LocationInfoBasic.LocationID
+				locationMap["${locationName}"] = "${locationId}"
+			}    							
+		}//httpPost
 	log.debug "This is map during Settings " + locationMap
 	
     return locationMap
@@ -361,14 +321,10 @@ Map getDeviceIDs(targetLocationId) {
         				body: [ SessionID: state.token, ApplicationID: applicationId, ApplicationVersion: applicationVersion]
     					]
    	httpPost(getSessionParams) { responseSession -> 
-        						 responseSession.data.Locations.LocationInfoBasic.each
-        						 {
-        						 	LocationInfoBasic ->
+        						 responseSession.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
         						 	locationId = LocationInfoBasic.LocationID
         						 	if(locationId == targetLocationId) {
-                                    	LocationInfoBasic.DeviceList.DeviceInfoBasic.each
-                                        {
-                                            DeviceInfoBasic ->
+                                    	LocationInfoBasic.DeviceList.DeviceInfoBasic.each { DeviceInfoBasic ->
                                             deviceName = DeviceInfoBasic.DeviceName
                                             deviceId = DeviceInfoBasic.DeviceID
                                             deviceMap.put(deviceName, deviceId)
@@ -417,6 +373,7 @@ Map sensorsDiscovered() {
 	return map
 }//returns list of sensors for preferences page
 
+/* Not used... Thinking this isn't the way to implement
 def updateSensorTypes() {
     //set sensor type
     settings.zoneDevices.each { dni ->
@@ -426,30 +383,7 @@ def updateSensorTypes() {
     
     log.debug "Sensors after type: " + state.sensors
 }//updates sensors with types from preferences (places in state as fact, probably not a good plan)
-
-// Gets Security Zones (Name & ZoneID) - Depricated by above methods
-Map getSecurityZones() {
-    String zoneName
-    String zoneID
-    Map zoneMap = [:]
-	
-	def getPanelMetaDataAndFullStatusEx = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatusEx",
-		body: [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
-	]
-	httpPost(getPanelMetaDataAndFullStatusEx) { responseSession -> 
-        						 responseSession.data.PanelMetadataAndStatus.Zones.ZoneInfo.each
-        						 {
-        						 	ZoneInfo ->
-                                        zoneID = ZoneInfo.'@ZoneID'
-                                        zoneName = ZoneInfo.'@ZoneDescription'
-                                    	zoneMap.put(zoneID, zoneName)
-        						 }    							
-    				}
-	log.debug "ZoneID map is " + zoneMap
-    
-  	return zoneMap
-} //Should return zone information
+*/
 
 // Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
 def discoverSwitches() {
@@ -490,31 +424,6 @@ Map switchesDiscovered() {
 	return map
 }//returns list of switches for preferences page
 
-
-// Gets Automation Devices (Name & SwitchID) - Depricated by above methods
-Map getAutomationDevices() {
-    String switchName
-    String switchID
-    Map automationMap = [:]
-	
-	def getAllAutomationDeviceStatusEx = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetAllAutomationDeviceStatusEx",
-		body: [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: '']
-	]
-	httpPost(getAllAutomationDeviceStatusEx) { responseSession -> 
-        						 responseSession.data.AutomationData.AutomationSwitch.SwitchInfo.each
-        						 {
-        						 	SwitchInfo ->
-                                        switchID = SwitchInfo.SwitchID
-                                        switchName = SwitchInfo.SwitchName
-                                    	automationMap.put(switchID, switchName)
-        						 }    							
-    				}
-	log.debug "SwitchID map is " + automationMap
-    
-  	return automationMap
-} //Should return automation information
-
 // Gets Thermostat Devices (Name & SwitchID)
 Map getThermostatDevices() {
     String thermostatName
@@ -539,32 +448,46 @@ Map getThermostatDevices() {
 	return thermostatMap
 } //Should return thermostat information
 
-// Gets Lock Devices (Name & SwitchID)
-Map getLockDevices() {
-    String lockName
-    String lockID
-    Map lockMap = [:]
+// Discovers Lock Devices
+def discoverLocks() {
+	def locks = [:]
 	
 	def getAllAutomationDeviceStatusEx = [
 		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetAllAutomationDeviceStatusEx",
 		body: [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: '']
 	]
 	httpPost(getAllAutomationDeviceStatusEx) { responseSession -> 
-        						 responseSession.data.AutomationData.AutomationLock.LockInfo_Transitional.each
-        						 {
-        						 	LockInfo_Transitional ->
-                                        lockID = LockInfo_Transitional.LockID
-                                        lockName = LockInfo_Transitional.LockName
-                                    	lockMap.put(lockID, lockName)
-        						 }    							
-    				}
-	log.debug "LockID map is " + lockMap
-    
-  	return lockMap
-} //Should return lock information
-// End of Page Functions
+    	responseSession.data.AutomationData.AutomationLock.LockInfo_Transitional.each { LockInfo_Transitional ->
+			//lockID = LockInfo_Transitional.LockID
+            //lockName = LockInfo_Transitional.LockName
+			locks[LockInfo_Transitional.LockID] = [id: "${LockInfo_Transitional.LockID}", name: "${LockInfo_Transitional.LockName}"] //use "${var}" to typecast into String
+		}//iterate through Locks				
+	}//response captured
+	log.debug "TotalConnect2.0 SM:  ${locks.size()} locks found"
+    log.debug locks
 
+	state.locks = locks
+} //Should discover locks information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
+
+Map locksDiscovered() {
+	def locks =  state.locks //needs some error checking likely
+	def map = [:]
+
+	locks.each {
+			def value = "${it?.value?.name}"
+			def key = "TC-${settings.automationDeviceId}-${it?.value?.id}" //Sets DeviceID to "TC-${AutomationID}-${LockID}.  Follows format of Harmony activites
+			map[key] = value
+	}//iterate through discovered locks to find value
+    
+    log.debug "Locks Options: " + map
+	return map
+}//returns list of locks for preferences page
+
+
+/////////////////////////////////////
 // TC2.0 Authentication Methods
+/////////////////////////////////////
+
 // Login Function. Returns SessionID for rest of the functions (doesn't seem to test if login is incorrect...)
 def login() {
     log.debug "Executed login"
@@ -643,39 +566,46 @@ def logout() {
        state.tokenRefresh = null
 }
 
+/////////////////////////////////////
 // SmartThings defaults
+/////////////////////////////////////
+
 def initialize() {
     state.token = login()
     log.debug "Initialize.  Login produced token: " + state.token
     
     //Send Keep Alive and test token every 3 minutes.  Well inside the tested 4.5+ min expiration
     schedule("0 0/3 * 1/1 * ? *", keepAlive)
+    
 	if (settings.alarmDevice && settings.alarmIntegration) {
         subscribe(location, checkMode)
         //subscribe(alarmPanel, checkAlarmMode) //Check for changes to alarm and set SHM
     }//if alarm enabled & smh integration enabled
-   	if (automationDevices) {
+
+/* Combine all selected devices into 1 variable to make sure we have devices and to deleted unused ones
+    List state.selectedDevices
+    if(alarmDevice) {
+    	state.selectedDevices.add("TC-${securityDeviceId}")
+    }//if alarmDevice exists
+    state.selectedDevices = state.selectedDevices + zoneDevices + automationDevices + thermostatDevices + lockDevices
+*/
+
+	if (alarmDevice || zoneDevices || automationDevices || thermostatDevices || lockDevices) {
 //		updateSensorTypes() //update sensor types to preference values instead of null defaults before we add devices - maybe a bad idea
     	addDevices()
     }//addDevices if we have any
-    
-/*    
-    settings.devices.each {deviceId ->
-        try {
-            def existingDevice = getChildDevice(deviceId)
-            if(!existingDevice) {
-                def childDevice = addChildDevice("smartthings", "Device Name", deviceId, null, [name: "Device.${deviceId}", label: device.name, completedSetup: true])
-            }
-        } catch (e) {
-            log.error "Error creating device: ${e}"
-        }
-    }
+
+/* Remove Devices that are no longer selected
+    def delete = getChildDevices().findAll { !state.selectedDevices.contains(it.deviceNetworkId) }
+	removeChildDevices(delete)
 */
 }
 def installed() {
 	log.debug "Installed with settings: ${settings}"
-    initialize()
-    }
+	state.firstRun = false //only run authentication on 1st setup.  After installed, it won't run again
+
+	initialize()
+}
     
 def updated() {
 	log.debug "Updated with settings: ${settings}"
@@ -689,15 +619,9 @@ def uninstalled() {
     removeChildDevices(getChildDevices())
 }
 
-private removeChildDevices(delete) {
-    delete.each {
-        deleteChildDevice(it.deviceNetworkId)
-    }
-}
-
-// ***********
-// Handlers
-// ***********
+/////////////////////////////////////
+// HANDLERS
+/////////////////////////////////////
 
 // Logic for Triggers based on mode change of SmartThings
 def checkMode(evt) {
@@ -715,13 +639,29 @@ def checkMode(evt) {
         }//if mode changes to Home
 }//checkMode(evt)
 
+/////////////////////////////////////
+// CHILD DEVICE MANAGEMENT
+/////////////////////////////////////
 
-
-//Child Devices
 def addDevices() {
+/* SmartThings Documentation adding devices, maybe add Try and Catch Block?
+    settings.devices.each {deviceId ->
+        try {
+            def existingDevice = getChildDevice(deviceId)
+            if(!existingDevice) {
+                def childDevice = addChildDevice("smartthings", "Device Name", deviceId, null, [name: "Device.${deviceId}", label: device.name, completedSetup: true])
+            }
+        } catch (e) {
+            log.error "Error creating device: ${e}"
+        }
+    }
+*/
 	if(settings.alarmDevice) {
-    	
-        //Create Alarm Device
+		def deviceID = "TC-${settings.securityDeviceId}"
+        def d = getChildDevice(deviceID)
+        if(!d) {
+			d = addChildDevice("jhstroebel", "TotalConnect Alarm", deviceID, null /*Hub ID*/, [name: "Device.${deviceID}", label: "TotalConnect Alarm", completedSetup: true])
+		}//Create Alarm Device if doesn't exist
     }//if Alarm is selected
 
 	if(settings.zoneDevices) {      
@@ -765,178 +705,95 @@ def addDevices() {
 			}//if it doesn't already exist
        	}//for each selected sensor
 	}//if automation devices are selected
-    
-/* Not yet implemented
-	if(settings.thermostatDevices) {
-		state.thermostats = [:]
-        settings.thermostatDevices.each {
-            deviceId = it.key
-            deviceName = it.value
-            state.thermostats.put(deviceId, deviceName) //builds map of thermostat devices
-       	}
-	}//if thermostat devices are selected
-    
-    if(settings.lockDevices() {
-        state.locks = [:]
-        settings.lockDevices.each {
-            deviceId = it.key
-            deviceName = it.value
-            state.locks.put(deviceId, deviceName) //builds map of lock devices
-       	}
-	}//if lock devices are selected
-*/
 
+//No device handler exists yet... commented out addChildDeviceLine until that is resolved...
+	if(settings.thermostatDevices) {      
+        log.debug "thermostatDevices: " + settings.thermostatDevices
+        def thermostats = state.thermostats
+
+		settings.thermostatDevices.each { dni ->
+            def d = getChildDevice(dni)
+            if(!d) {
+            	def newThermostat
+                newThermostat = thermostats.find { ("TC-${settings.automationDeviceId}-${it.value.id}") == dni }
+
+//				d = addChildDevice("jhstroebel", "TotalConnect Thermostat", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newThermostat?.value.name}", completedSetup: true])
+			}//if it doesn't already exist
+       	}//for each selected thermostat
+	}//if there are thermostatDevices
+
+//No device handler exists yet... commented out addChildDeviceLine until that is resolved...
+	if(settings.lockDevices) {      
+        log.debug "lockDevices: " + settings.lockDevices
+        def locks = state.locks
+
+		settings.lockDevices.each { dni ->
+            def d = getChildDevice(dni)
+            if(!d) {
+            	def newLock
+                newLock = locks.find { ("TC-${settings.automationDeviceId}-${it.value.id}") == dni }
+
+//				d = addChildDevice("jhstroebel", "TotalConnect Lock", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newLock?.value.name}", completedSetup: true])
+			}//if it doesn't already exist
+       	}//for each selected lock
+	}//if there are lockDevices
 }//addDevices()
 
-// Alarm Code from Original TC2.0 App that changes with mode
-/* Subscribe to changes in mode and change alarm mode
-def installed() {
-	//log.debug "Installed with settings: ${settings}"
-    subscribe(location, checkMode)
-}
-
-def updated() {
-	//log.debug "Updated with settings: ${settings}"
-	unsubscribe()
-    subscribe(location, checkMode)
-}
-
-// Logic for Triggers based on mode change of SmartThings
-def checkMode(evt) {
-    	if (evt.value == "Away") {
-            	log.debug "Mode is set to Away, Performing ArmAway"
-            	armAway()   
-            }
-        else if (evt.value == "Night") {
-            	log.debug "Mode is set to Night, Performing ArmStay"
-            	armStay()
-            }
-        else if (evt.value == "Home") {
-            	log.debug "Mode is set to Home, Performing Disarm"
-            	disarm()
-        }
-}
-
-// Gets Panel Metadata. Takes token & location ID as an argument
-Map panelMetaData(token, locationId) {
-	def alarmCode
-    def lastSequenceNumber
-    def lastUpdatedTimestampTicks
-    def partitionId
- 	def getPanelMetaDataAndFullStatus = [
-    									uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatus",
-        								body: [ SessionID: token, LocationID: locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
-    ]
-   	httpPost(getPanelMetaDataAndFullStatus) {	response -> 
-        										lastUpdatedTimestampTicks = response.data.PanelMetadataAndStatus.'@LastUpdatedTimestampTicks'
-        										lastSequenceNumber = response.data.PanelMetadataAndStatus.'@ConfigurationSequenceNumber'
-        										partitionId = response.data.PanelMetadataAndStatus.Partitions.PartitionInfo.PartitionID
-        										alarmCode = response.data.PanelMetadataAndStatus.Partitions.PartitionInfo.ArmingState
-                                                
+private removeChildDevices(delete) {
+    delete.each {
+        deleteChildDevice(it.deviceNetworkId)
     }
-	//log.debug "AlarmCode is " + alarmCode
-  return [alarmCode: alarmCode, lastSequenceNumber: lastSequenceNumber, lastUpdatedTimestampTicks: lastUpdatedTimestampTicks]
-} //Should return alarmCode, lastSequenceNumber & lastUpdateTimestampTicks
+}
 
-// Get LocationID & DeviceID map
-Map getSessionDetails(token) {
-	def locationId
-    def deviceId
-    def locationName
-    Map locationMap = [:]
-    Map deviceMap = [:]
-	def getSessionParams = [
-    					uri: "https://rs.alarmnet.com/tc21api/tc2.asmx/GetSessionDetails",
-        				body: [ SessionID: token, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-    					]
-   	httpPost(getSessionParams) { responseSession -> 
-        						 responseSession.data.Locations.LocationInfoBasic.each
-        						 {
-        						 	LocationInfoBasic ->
-        						 	locationName = LocationInfoBasic.LocationName
-        						 	locationId = LocationInfoBasic.LocationID
-        						 	deviceId = LocationInfoBasic.DeviceList.DeviceInfoBasic.DeviceID
-        						 	locationMap["${locationName}"] = "${locationId}"
-                                    deviceMap["${locationName}"] = "${deviceId}"
-        						 }    							
-    				}
-	// log.debug "Location map is " + locationMap + "& Devie ID map is " + deviceMap
-  	return [locationMap: locationMap, deviceMap: deviceMap]
-} // Should return Map of Locations
+/////////////////////////////////////
+// CHILD DEVICE METHODS
+/////////////////////////////////////
 
 // Arm Function. Performs arming function
-def armAway() {        
-	def token = login(token)
-	def details = getSessionDetails(token) // Gets Map of Location
-            // log.debug "This was Selected " + settings.selectedLocation
-    	def locationName = settings.selectedLocation
-    	def locationId = details.locationMap[locationName]
-            // log.debug "ArmAway Function. Location ID is " + locationId
-    	def deviceId = details.deviceMap[locationName]
-            // log.debug "ArmAway Function. Device ID is " + deviceId
-            
-    	def paramsArm = [
-    			uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
-    			body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, ArmType: 0, UserCode: '-1']
-    			]
-   			httpPost(paramsArm) // Arming Function in away mode
-        def metaData = panelMetaData(token, locationId) // Get AlarmCode
-            while( metaData.alarmCode != 10201 ){ 
-                pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
-                metaData = panelMetaData(token, locationId)
-            }  
-            //log.debug "Home is now Armed successfully" 
-            sendPush("Home is now Armed successfully")     
-   logout()
-}
-
-def armStay() {        
-	def token = login(token)
-    	def details = getSessionDetails(token) // Gets Map of Location
-            // log.debug "This was Selected " + settings.selectedLocation
-    	def locationName = settings.selectedLocation
-    	def locationId = details.locationMap[locationName]
-            // log.debug "ArmStay Function. Location ID is " + locationId
-    	def deviceId = details.deviceMap[locationName]
-            // log.debug "ArmStay Function. Device ID is " + deviceId
-            
-    	def paramsArm = [
-    			uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
-    			body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, ArmType: 1, UserCode: '-1']
-    			]
-   			httpPost(paramsArm) // Arming function in stay mode
-    	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
-            while( metaData.alarmCode != 10203 ){ 
-                pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
-                metaData = panelMetaData(token, locationId)
-            } 
-            //log.debug "Home is now Armed for Night successfully"     
- 			sendPush("Home is armed in Night mode successfully")
-    logout()
-}
-
-def disarm() {
-	def token = login(token)
-        def details = getSessionDetails(token) // Get Location & Device ID
-            // log.debug "This was Selected " + settings.selectedLocation
-        def locationName = settings.selectedLocation
-    	def deviceId = details.deviceMap[locationName]
-            // log.debug "DisArm Function. Device ID is " + deviceId
-    	def locationId = details.locationMap[locationName]
-            // log.debug "DisArm Function. Location ID is " + locationId
-
-        	def paramsDisarm = [
-    			uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/DisarmSecuritySystem",
-    			body: [SessionID: token, LocationID: locationId, DeviceID: deviceId, UserCode: '-1']
-    			]
-   			httpPost(paramsDisarm)  
-   	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
-        	while( metaData.alarmCode != 10200 ){ 
-                pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
-                metaData = panelMetaData(token, locationId)
-            }
-           // log.debug "Home is now Disarmed successfully"   
-           sendPush("Home is now Disarmed successfully")
-	logout()         
-}
+def armAway(childDevice) {        
+	log.debug "TotalConnect2.0 SM: Executing 'armAway'"
+    def paramsArm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
+    				body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 0, UserCode: '-1']]
+	httpPost(paramsArm) // Arming Function in away mode
+/*	
+    def metaData = panelMetaData(token, locationId) // Get AlarmCode
+	while( metaData.alarmCode != 10201 ){ 
+		pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
+		metaData = panelMetaData(token, locationId)
+	}  
+	//log.debug "Home is now Armed successfully" 
+	sendPush("Home is now Armed successfully")
 */
+}//armaway
+
+def armStay(childDevice) {        
+	log.debug "TotalConnect2.0 SM: Executing 'armStay'"
+    def paramsArm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
+    				body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 1, UserCode: '-1']]
+	httpPost(paramsArm) // Arming function in stay mode
+/* 	
+    def metaData = panelMetaData(token, locationId) // Gets AlarmCode
+	while( metaData.alarmCode != 10203 ){ 
+		pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
+		metaData = panelMetaData(token, locationId)
+	} 
+	//log.debug "Home is now Armed for Night successfully"     
+	sendPush("Home is armed in Night mode successfully")
+*/
+}//armstay
+
+def disarm(childDevice) {
+	log.debug "TotalConnect2.0 SM: Executing 'disarm'"
+    def paramsDisarm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/DisarmSecuritySystem",
+    				   body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, UserCode: '-1']]
+	httpPost(paramsDisarm)  
+/*   	
+    def metaData = panelMetaData(token, locationId) // Gets AlarmCode
+    while( metaData.alarmCode != 10200 ){ 
+		pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
+		metaData = panelMetaData(token, locationId)
+	}
+	// log.debug "Home is now Disarmed successfully"   
+	sendPush("Home is now Disarmed successfully")
+*/
+}//disarm
