@@ -78,7 +78,9 @@
  Future Changes Needed
  	- Modify login to check if successful (doesn't seem to do that now!)
     - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
-    - Automation Device may not exist.  Current code likely doesn't handle that well
+    - Automation Device (Zwave module, etc) may not exist.  Current code likely doesn't handle that well
+    - Implement thermostats & locks
+    - Deal with user removing items in settings (adding is fine)
  */
  
 definition(
@@ -717,9 +719,12 @@ def checkMode(evt) {
 
 //Child Devices
 def addDevices() {
-        def deviceId
-        def deviceName
-        
+	if(settings.alarmDevice) {
+    	
+        //Create Alarm Device
+    }//if Alarm is selected
+
+	if(settings.zoneDevices) {      
         log.debug "zoneDevices: " + settings.zoneDevices
         def sensors = state.sensors
 
@@ -737,7 +742,9 @@ def addDevices() {
                 }
 			}//if it doesn't already exist
        	}//for each selected sensor
-
+	}//if there are zoneDevices
+    
+    if(settings.automationDevices) {
         log.debug "automationDevices: " + settings.automationDevices
         def switches = state.switches
 
@@ -757,20 +764,26 @@ def addDevices() {
                 }
 			}//if it doesn't already exist
        	}//for each selected sensor
-
+	}//if automation devices are selected
+    
 /* Not yet implemented
-        state.thermostats = [:]
+	if(settings.thermostatDevices) {
+		state.thermostats = [:]
         settings.thermostatDevices.each {
             deviceId = it.key
             deviceName = it.value
             state.thermostats.put(deviceId, deviceName) //builds map of thermostat devices
        	}
+	}//if thermostat devices are selected
+    
+    if(settings.lockDevices() {
         state.locks = [:]
         settings.lockDevices.each {
             deviceId = it.key
             deviceName = it.value
             state.locks.put(deviceId, deviceName) //builds map of lock devices
        	}
+	}//if lock devices are selected
 */
 
 }//addDevices()
