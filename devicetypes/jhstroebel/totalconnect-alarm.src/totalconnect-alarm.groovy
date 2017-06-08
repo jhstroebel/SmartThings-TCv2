@@ -63,54 +63,6 @@ tiles {
 	}
 }
 
-// Login Function. Returns SessionID for rest of the functions
-def login(token) {
-	log.debug "Executed login"
-	def paramsLogin = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
-		body: [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-	]
-	httpPost(paramsLogin) { responseLogin ->
-		token = responseLogin.data.SessionID 
-	}
-	log.debug "Smart Things has logged In. SessionID: ${token}" 
-	return token
-} // Returns token		
-
-// Logout Function. Called after every mutational command. Ensures the current user is always logged Out.
-def logout(token) {
-	log.debug "During logout - ${token}"
-	def paramsLogout = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Logout",
-		body: [SessionID: token]
-	]
-	httpPost(paramsLogout) { responseLogout ->
-		log.debug "Smart Things has successfully logged out"
-	}  
-}
-
-// Gets Panel Metadata. Takes token & location ID as an argument
-Map panelMetaData(token, locationId) {
-	def alarmCode
-	def lastSequenceNumber
-	def lastUpdatedTimestampTicks
-	def partitionId
-	def getPanelMetaDataAndFullStatus = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatus",
-		body: [ SessionID: token, LocationID: locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
-	]
-	httpPost(getPanelMetaDataAndFullStatus) {	response -> 
-		lastUpdatedTimestampTicks = response.data.PanelMetadataAndStatus.'@LastUpdatedTimestampTicks'
-		lastSequenceNumber = response.data.PanelMetadataAndStatus.'@ConfigurationSequenceNumber'
-		partitionId = response.data.PanelMetadataAndStatus.Partitions.PartitionInfo.PartitionID
-		alarmCode = response.data.PanelMetadataAndStatus.Partitions.PartitionInfo.ArmingState
-		log.debug response.data.PanelMetadataAndStatus.Zones.inspect()
-	}
-	//log.debug "AlarmCode is " + alarmCode
-	//log.debug response.data.PanelMetadataAndStatus.Partitions.PartitionInfo.inspect()
-	return [alarmCode: alarmCode, lastSequenceNumber: lastSequenceNumber, lastUpdatedTimestampTicks: lastUpdatedTimestampTicks]
-} //Should return alarmCode, lastSequenceNumber & lastUpdateTimestampTicks
-
 // Arm Function. Performs arming function
 def armAway() {		   
 	def token = login(token)

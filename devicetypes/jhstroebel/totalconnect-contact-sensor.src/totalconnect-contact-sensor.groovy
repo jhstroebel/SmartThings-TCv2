@@ -143,7 +143,6 @@ def updateSensor(String status) {
 
 def off() {
 	log.debug "Bypassing Sensor"
-	def token = login(token)
 	def zname = device.name
 	def bypassok
 	def deviceID = settings.deviceId	
@@ -159,7 +158,7 @@ def off() {
 	httpPost(bypass) {	response -> 
         bypassok = response.data
 	}
-logout(token)
+
 	sendEvent(name: "switch", value: "off", displayed: "true", description: "Bypassing") 
 	sendEvent(name: "contact", value: "bypassed", displayed: "true", description: "Status: Zone Bypassed")
     runIn(15,refresh)

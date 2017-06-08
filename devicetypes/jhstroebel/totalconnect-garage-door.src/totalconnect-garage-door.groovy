@@ -60,57 +60,6 @@ tiles {
 	}
 }
 
-// Login Function. Returns SessionID for rest of the functions
-def login(token) {
-	log.debug "Executed login"
-	def paramsLogin = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
-		body: [userName: settings.userName, password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-	]	
-	httpPost(paramsLogin) { responseLogin ->
-		token = responseLogin.data.SessionID 
-	}
-	log.debug "Smart Things has logged In. SessionID: ${token}" 
-	return token
-} // Returns token		
-
-// Logout Function. Called after every mutational command. Ensures the current user is always logged Out.
-def logout(token) {
-	log.debug "During logout - ${token}"
-	def paramsLogout = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Logout",
-		body: [SessionID: token]
-	]
-	httpPost(paramsLogout) { responseLogout ->
-		log.debug "Smart Things has successfully logged out"
-	}  
-}
-
-// Gets Automation Device Status. Takes token & Automation Device ID as an argument
-Map automationDeviceStatus(token, deviceId) {
-    def tcswitchInfo
-	def tcswitches = [:]
-	def tcswitchId
-	def tcswitchState
-	def getAllAutomationDeviceStatusEx = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetAllAutomationDeviceStatusEx",
-		body: [SessionID: token, DeviceID: deviceId, AdditionalInput: '']
-	]
-	httpPost(getAllAutomationDeviceStatusEx) { response ->
-        tcswitchInfo = response.data.AutomationData.AutomationSwitch.SwitchInfo        
-        tcswitchInfo.each
-        {
-            SwitchInfo ->
-        		tcswitchId = SwitchInfo.SwitchID.toInteger()
-				tcswitchState = SwitchInfo.SwitchState.toInteger()
-        		tcswitches.put(tcswitchId,tcswitchState)
-        }
-    }
-	log.debug "SwitchID: SwitchState " + tcswitches
-
-	return tcswitches
-} //Should return switch state information for all SwitchIDs
-
 def controlSwitch(int switchAction) {		   
 	def token = login(token)
 	def deviceId = settings.deviceId

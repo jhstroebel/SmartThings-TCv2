@@ -61,57 +61,6 @@ metadata {
 // 16 – Tampered
 // 32 – Supervision Failed
 
-// Login Function. Returns SessionID for rest of the functions
-def login(token) {
-	log.debug "Executed login"
-	def paramsLogin = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
-		body: [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-	]
-	httpPost(paramsLogin) { responseLogin ->
-		token = responseLogin.data.SessionID 
-	}
-	return token
-} // Returns token		
-
-// Logout Function. Called after every mutational command. Ensures the current user is always logged Out.
-def logout(token) {
-	//log.debug "During logout - ${token}"
-	def paramsLogout = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Logout",
-		body: [SessionID: token]
-	]
-	httpPost(paramsLogout) { responseLogout ->
-		log.debug "Smart Things has successfully logged out"
-	}  
-}
-
-// Gets Zone Metadata. Takes token & location ID as an argument
-Map zoneMetaData(token, locationId) {
-	def tczones = [:]
-	String zoneID
-	String zoneStatus
-	String zoneName
-	def getPanelMetaDataAndFullStatusEx = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatusEx",
-		body: [SessionID: token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
-	]
-	httpPost(getPanelMetaDataAndFullStatusEx) { responseSession -> 
-        responseSession.data.PanelMetadataAndStatus.Zones.ZoneInfo.each
-        {
-			ZoneInfo ->
-				zoneID = ZoneInfo.'@ZoneID'
-				zoneStatus = ZoneInfo.'@ZoneStatus'
-				zoneName = ZoneInfo.'@ZoneDescription'
-//              log.debug "ZoneID: ${zoneID}, ZoneStatus: ${zoneStatus}, ZoneName: ${zoneName}"
-				tczones.put(zoneID, zoneStatus)
-        }
-        
-        log.debug tczones
-    }
-	return tczones
-} //Should return zone information
-
 def refresh() {		   
 	def token = login(token)
 	String zname = device.name
