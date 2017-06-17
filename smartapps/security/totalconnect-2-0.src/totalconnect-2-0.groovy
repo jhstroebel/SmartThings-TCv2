@@ -18,6 +18,7 @@
  *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this
  *      - Could use post method for all HTTP calls and return XML.  This method could update 
  *		- Need TotalConnect Thermostat and TotalConnect Lock Device Handlers...
+ *		- Armed Away from Armed Stay or vice versa does not work.  Must disarm first
  *
  *  Copyright 2017 Jeremy Stroebel
  *
@@ -65,10 +66,20 @@
  *
  * General TotalConnect Notes (documenting found and probed values)
  *
- * Alarm Status
+ * Arming State - Alarm Status - Arm Type
  * 10200 - Disarmed
- * 10203 - Armed Stay
- * 10201 - Armed Away
+ * 10201 - Armed Away - 0
+ * 10202 - Armed Away (Zone Bypassed)
+ * 10203 - Armed Stay - 1
+ * 10204 - Armed Stay (Zone Bypassed)
+ * 10205 - Armed Away (Instant) - 3
+ * 10206 - Armed Away (Instant) (Zone Bypassed)
+ * 10209 - Armed Stay (Instant) - 2
+ * 10210 - Armed Stay (Instant) (Zone Bypassed)
+ * 10211 - Disarmed (Zone Bypassed)
+ * 10218 - Armed Night Stay - 4
+ * 10307 - Arming (Shown from when command is sent until panel actually starts arming countdown)
+ * 10308 - Disarming (not shown by TotalConnect on Lynx 5200?)
  *
  * Zone Types (By Zone Number)
  * 1-44 - Normal
@@ -127,6 +138,9 @@
  * Map state.switches
  * Map state.thermostats
  * Map state.locks
+ * Map state.alarmStatus
+ * Map state.zoneStatus
+ * Map state.switchStatus
  * 
  */
 
@@ -373,18 +387,6 @@ Map sensorsDiscovered() {
 	return map
 }//returns list of sensors for preferences page
 
-/* Not used... Thinking this isn't the way to implement
-def updateSensorTypes() {
-    //set sensor type
-    settings.zoneDevices.each { dni ->
-		log.debug settings["${dni}_zoneType"]
-        state.sensors.find { ("TC-${settings.securityDeviceId}-${it.value.id}") == dni }?.value.type = settings["${dni}_zoneType"]
-	}//Set type for each sensor after defined
-    
-    log.debug "Sensors after type: " + state.sensors
-}//updates sensors with types from preferences (places in state as fact, probably not a good plan)
-*/
-
 // Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
 def discoverSwitches() {
     def switches = [:]
@@ -599,6 +601,8 @@ def initialize() {
     def delete = getChildDevices().findAll { !state.selectedDevices.contains(it.deviceNetworkId) }
 	removeChildDevices(delete)
 */
+
+	pollChildren()
 }
 def installed() {
 	log.debug "Installed with settings: ${settings}"
@@ -750,14 +754,37 @@ private removeChildDevices(delete) {
 /////////////////////////////////////
 
 // Arm Function. Performs arming function
-def armAway(childDevice) {        
-	log.debug "TotalConnect2.0 SM: Executing 'armAway'"
+def armAway(childDevice) {
+    log.debug "TotalConnect2.0 SM: Executing 'armAway'"
     def paramsArm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
     				body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 0, UserCode: '-1']]
 	httpPost(paramsArm) // Arming Function in away mode
+
+/* this code may not make sense... Alarm shows as armed during countdown.  Maybe push arming, then push status?  Also what happens if it doesn't arm?  this runs forever?
+ * Also can't use pause(60000), it will exceed the 20 second method execution time... maybe try a runIn() in the device handler to refresh status
+ 
+    pause(60000) //60 second pause for arming countdown
+    def alarmCode = alarmPanelStatus()
+    
+    while(alarmCode != 10201) {
+    	pause(3000) // 3 second pause to retry alarm status
+        alarmCode = alarmPanelStatus()
+    }//while alarm has not armed
+
+	//log.debug "Home is now Armed successfully" 
+    sendEvent(it, [name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away"])
+*/
+}//armaway
+
+//not used yet...
+def armAwayInstant(childDevice) {
+    log.debug "TotalConnect2.0 SM: Executing 'armAwayInstant'"
+    def paramsArm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
+    				body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 3, UserCode: '-1']]
+	httpPost(paramsArm) // Arming Function in awayInstant mode
 /*	
     def metaData = panelMetaData(token, locationId) // Get AlarmCode
-	while( metaData.alarmCode != 10201 ){ 
+	while( metaData.alarmCode != 10205 ){ 
 		pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
 		metaData = panelMetaData(token, locationId)
 	}  
@@ -782,6 +809,23 @@ def armStay(childDevice) {
 */
 }//armstay
 
+//not used yet...
+def armStayInstant(childDevice) {        
+	log.debug "TotalConnect2.0 SM: Executing 'armStayInstant'"
+    def paramsArm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ArmSecuritySystem",
+    				body: [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 2, UserCode: '-1']]
+	httpPost(paramsArm) // Arming function in stay (instant) mode
+/* 	
+    def metaData = panelMetaData(token, locationId) // Gets AlarmCode
+	while( metaData.alarmCode != 10209 ){ 
+		pause(3000) // 3 Seconds Pause to relieve number of retried on while loop
+		metaData = panelMetaData(token, locationId)
+	} 
+	//log.debug "Home is now Armed for Night successfully"     
+	sendPush("Home is armed in Night mode successfully")
+*/
+}//armstay
+
 def disarm(childDevice) {
 	log.debug "TotalConnect2.0 SM: Executing 'disarm'"
     def paramsDisarm = [uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/DisarmSecuritySystem",
@@ -797,3 +841,421 @@ def disarm(childDevice) {
 	sendPush("Home is now Disarmed successfully")
 */
 }//disarm
+
+def bypassSensor(childDevice) {
+    def childDeviceInfo = childDevice.getDeviceNetworkId().split("-") //takes deviceId & zoneId from deviceNetworkID in format "TC-DeviceID-SwitchID"
+    def deviceId = childDeviceInfo[1]
+	def zoneId = childDeviceInfo[2]
+    
+    log.debug "TotalConnect2.0 SM: Bypassing Sensor"
+	def bypassok
+	log.debug "Bypassing Zone: ${zoneId}"
+	def bypass = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Bypass",
+		body: [ SessionID: state.token, LocationID: settings.locationId, DeviceID: deviceId, Zone: zoneId, UserCode: '-1']
+	]
+    log.debug bypass
+	httpPost(bypass) {	response -> 
+        bypassok = response.data
+	}//collects response data into bypassok, could debug if needed
+}//bypassSensor
+
+def controlSwitch(childDevice, int switchAction) {		   
+	def childDeviceInfo = childDevice.getDeviceNetworkId().split("-") //takes deviceId & switchId from deviceNetworkID in format "TC-DeviceID-SwitchID"
+    def deviceId = childDeviceInfo[1]
+	def switchId = childDeviceInfo[2]
+    
+	def paramsControl = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ControlASwitch",
+		body: [SessionID: state.token, DeviceID: deviceId, SwitchID: switchId, SwitchAction: switchAction]
+	]
+	httpPost(paramsControl) // Sending Switch Control
+}//controlSwitch
+
+def pollChildren(childDevice = null) {
+	//log.debug "pollChildren() - forcePoll: ${state.forcePoll}, lastPoll: ${state.lastPoll}, now: ${now()}"
+    log.debug childDevice
+    
+	if(!isTokenValid())
+    {
+    	log.error "Token is likely expired.  Check Keep alive function in SmartApp"
+        state.token = login(token).toString()
+    }//check if token is likely still valid or login.  Might add a sendCommand(command) method and check before sending any commands...
+    
+    if(childDevice == null) {
+        //update all devices (after checking that they exist)
+        if(settings.alarmDevice) {
+        	//update alarm
+            state.alarmStatus = alarmPanelStatus()
+        }
+    	if(settings.zoneDevices) {
+        	//update zoneDevices
+            state.zoneStatus = zoneStatus()
+        }
+        if(settings.automationDevices || settings.thermostatDevices || settings.lockDevices) {
+        	//update automationDevices
+            state.switchStatus = automationDeviceStatus()
+        }//automation devices are 1 call... if any exist update all 3 types
+    }//check device type and update all of that type only (scheduled polling)
+    else {
+		log.debug childDevice
+        def childDeviceInfo = childDevice.getDeviceNetworkId().split("-") //takes deviceId & subDeviceId from deviceNetworkID in format "TC-DeviceID-SubDeviceID"
+        def deviceId = childDeviceInfo[1]
+                
+        if(childDeviceInfo.length == 2) {
+        	//its a security panel
+            state.alarmStatus = alarmPanelStatus()
+        } else if(deviceId == settings.securityDeviceId) {
+        	//its a zone sensor
+            state.zoneStatus = zoneStatus()
+        } else if(deviceId == settings.automationDeviceId) {
+        	//its an automation device (for now below works, but when thermostats and locks are added, need more definition)
+            state.switchStatus = automationDeviceStatus()
+        }
+        else {
+        	log.error "deviceNetworkId is not formatted as expected.  ID: ${childDevice.getDeviceNetworkId()}"
+        }
+	}//if childDevice is passed in (on demand refresh)
+	
+    updateStatuses()
+    
+/* Code stolen from ecobee    
+   // Check to see if it is time to do an full poll to the Ecobee servers. If so, execute the API call and update ALL children
+    def timeSinceLastPoll = (atomicState.forcePoll == true) ? 0 : ((now() - atomicState.lastPoll?.toDouble()) / 1000 / 60) 
+    LOG("Time since last poll? ${timeSinceLastPoll} -- atomicState.lastPoll == ${atomicState.lastPoll}", 3, child, "info")
+    
+    if ( (atomicState.forcePoll == true) || ( timeSinceLastPoll > getMinMinBtwPolls().toDouble() ) ) {
+    	// It has been longer than the minimum delay OR we are doing a forced poll
+        LOG("Calling the Ecobee API to fetch the latest data...", 4, child)
+    	pollEcobeeAPI(getChildThermostatDeviceIdsString())  // This will update the values saved in the state which can then be used to send the updates
+	} else {
+        LOG("pollChildren() - Not time to call the API yet. It has been ${timeSinceLastPoll} minutes since last full poll.", 4, child)
+        generateEventLocalParams() // Update any local parameters and send
+    }
+	
+	// Iterate over all the children
+	def d = getChildDevices()
+    d?.each() { oneChild ->
+    	LOG("pollChildren() - Processing poll data for child: ${oneChild} has ${oneChild.capabilities}", 4)
+        
+    	if( oneChild.hasCapability("Thermostat") ) {
+        	// We found a Thermostat, send all of its events
+            LOG("pollChildren() - We found a Thermostat!", 5)
+            oneChild.generateEvent(atomicState.thermostats[oneChild.device.deviceNetworkId]?.data)
+        } else {
+        	// We must have a remote sensor
+            LOG("pollChildren() - Updating sensor data for ${oneChild}: ${oneChild.device.deviceNetworkId} data: ${atomicState.remoteSensorsData[oneChild.device.deviceNetworkId]?.data}", 4)
+            oneChild.generateEvent(atomicState.remoteSensorsData[oneChild.device.deviceNetworkId]?.data)
+        } 
+    }
+    return results
+*/// pollChildren from Ecobee Connect Code
+}//pollChildren
+
+// Gets Panel Metadata. Pulls Zone Data from same call (does not work in testing).  Takes token & location ID as an argument.
+def alarmPanelStatus() {
+	//used to return Map
+	String alarmCode
+/* Variables for zone information (doesn't accurately report status)
+	String zoneID
+    String zoneStatus
+    def zoneMap = [:]
+*/
+
+	def getPanelMetaDataAndFullStatusEx = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetPanelMetaDataAndFullStatusEx",
+		body: [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]
+	]
+	httpPost(getPanelMetaDataAndFullStatusEx) { responseSession -> 
+		def data = responseSession.data.children()
+
+		alarmCode = data.Partitions.PartitionInfo.ArmingState
+/* Parse zone information into map (doesn't accurately report status)
+		zoneMap.put("0", alarmCode) //Put alarm code in as zone 0
+
+		data.Zones.ZoneInfo.each
+		{
+			ZoneInfo ->
+				zoneID = ZoneInfo.'@ZoneID'
+				zoneStatus = ZoneInfo.'@ZoneStatus'
+				zoneMap.put(zoneID, zoneStatus)
+		}
+*/        
+	}
+/* Debug and return full zoneMap (doesn't accurately report status)
+	log.debug "ZoneNumber: ZoneStatus " + zoneMap
+    return zoneMap
+*/
+	return alarmCode
+} //returns alarmCode
+
+Map zoneStatus() {
+    String zoneID
+    String zoneStatus
+    def zoneMap = [:]
+	
+    //use Ex version to get if zone is bypassable
+	def getZonesListInStateEx = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetZonesListInStateEx",
+		body: [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0]
+	]
+	httpPost(getZonesListInStateEx) { responseSession -> 
+    	def data = responseSession.data
+        
+        data.ZoneStatus.Zones.ZoneStatusInfoEx.each
+        {
+        	ZoneStatusInfoEx ->
+            	zoneID = ZoneStatusInfoEx.'@ZoneID'
+				zoneStatus = ZoneStatusInfoEx.'@ZoneStatus'
+				//bypassable = ZoneStatusInfoEx.'@CanBeBypassed' //0 means no, 1 means yes
+				zoneMap.put(zoneID, zoneStatus)
+		}//each Zone 
+	}//Post response
+
+	log.debug "ZoneNumber: ZoneStatus " + zoneMap
+    return zoneMap
+} //Should return zone information
+
+// Gets Automation Device Status
+Map automationDeviceStatus() {
+	String switchID
+	String switchState
+    Map automationMap = [:]
+	
+    def getAllAutomationDeviceStatusEx = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/GetAllAutomationDeviceStatusEx",
+		body: [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: '']
+	]
+	httpPost(getAllAutomationDeviceStatusEx) { responseSession ->
+        responseSession.data.AutomationData.AutomationSwitch.SwitchInfo.each
+        {
+            SwitchInfo ->
+        		switchID = SwitchInfo.SwitchID
+                switchState = SwitchInfo.SwitchState
+                automationMap.put(switchID,switchState)
+        }
+    }
+	log.debug "SwitchID: SwitchState " + automationMap
+
+	return automationMap
+} //Should return switch state information for all SwitchIDs
+
+def updateStatuses() {
+/* Not needed, updates happen in pollChildren()
+	def token = state.token
+	def locationId = settings.locationId
+	def automationDeviceId = settings.automationDeviceId
+    def securityDeviceId = settings.securityDeviceId
+    
+    def securityStatus
+    def automationStatus
+    
+    if(settings.alarmDevice!=null || settings.zoneDevices!=null) {
+    	securityStatus = securityDeviceStatus(token, locationId)
+    }//Check for alarm device and/or sensor devices before making unnecessary call
+
+	if(settings.deviceList!=null) {
+    	automationStatus = automationDeviceStatus(token, automationDeviceID)
+    }//Check for automation devices before making unnecessary call
+*/
+        if(settings.alarmDevice) { 
+        	try {
+                if(state.alarmStatus) {
+					def deviceID = "TC-${settings.securityDeviceId}"
+        			def d = getChildDevice(deviceID)
+                    
+					def currentStatus = state.alarmStatus
+                    log.debug "SmartThings Status is: " + d.currentStatus
+                    
+                    switch(currentStatus) {
+                    	case "10200":
+                        case "10211": //technically this is Disarmed w/ Zone Bypassed
+                        	log.debug "Polled Status is: Disarmed"
+                            if(d.currentStatus != "Disarmed") {
+                            	sendEvent(d, [name: "status", value: "Disarmed", displayed: "true", description: "Refresh: Alarm is Disarmed"]) }
+                            break
+                    	case "10201":
+                        case "10202": //technically this is Armed Away w/ Zone Bypassed
+							log.debug "Polled Status is: Armed Away"
+                            if(d.currentStatus != "Armed Away") {
+                        		sendEvent(d, [name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away"]) }
+                            break
+                        case "10203":
+                        case "10204": //technically this is Armed Stay w/ Zone Bypassed
+							log.debug "Polled Status is: Armed Stay"
+                            if(d.currentStatus != "Armed Stay") {
+								sendEvent(d, [name: "status", value: "Armed Stay", displayed: "true", description: "Refresh: Alarm is Armed Stay"]) }
+                            break
+                        case "10205":
+                        case "10206": //technically this is Armed Away - Instant w/ Zone Bypassed
+							log.debug "Polled Status is: Armed Away - Instant"
+                            if(d.currentStatus != "Armed Stay - Instant") {
+								sendEvent(d, [name: "status", value: "Armed Away - Instant", displayed: "true", description: "Refresh: Alarm is Armed Away - Instant"]) }
+                            break
+                        case "10209":
+                        case "10210": //technically this is Armed Stay - Instant w/ Zone Bypassed
+							log.debug "Polled Status is: Armed Stay - Instant"
+                            if(d.currentStatus != "Armed Stay - Instant") {
+								sendEvent(d, [name: "status", value: "Armed Stay - Instant", displayed: "true", description: "Refresh: Alarm is Armed Stay - Instant"]) }
+                            break                            
+                        case "10218":
+							log.debug "Polled Status is: Armed Night Stay"
+                            if(d.currentStatus != "Armed Night Stay") {
+								sendEvent(d, [name: "status", value: "Armed Night Stay", displayed: "true", description: "Refresh: Alarm is Armed Night Stay"]) }
+                            break
+                        /* These cases don't seem to show up on my panel so I am commenting them out unless someone can prove they are real.  They are not implemented in the Device Handler either
+                         * Disarming is instant... not sure it would show up anyway
+                        case "10307":
+							log.debug "Polled Status is: Arming"
+                            if(d.currentStatus != "Arming") {
+								sendEvent(d, [name: "status", value: "Arming", displayed: "true", description: "Refresh: Alarm is Arming"]) }
+                            break 
+                        case "10308":
+							log.debug "Polled Status is: Disarming"
+                            if(d.currentStatus != "Disarming") {
+								sendEvent(d, [name: "status", value: "Disarming", displayed: "true", description: "Refresh: Alarm is Disarming"]) }
+                            break
+                        */
+                        default:
+                        	log.debug "Alarm Status returned an irregular value " + currentStatus
+                            break
+                        }
+						sendEvent(name: "refresh", value: "true", displayed: "true", description: "Alarm Refresh Successful") 
+				}
+				else {
+					log.debug "Alarm Code does not exist"
+				}
+      		} catch (e) {
+      			log.error("Error Occurred Updating Alarm "+it.displayName+", Error " + e)
+      		}
+        }
+        def children = getChildDevices()    
+        def zoneChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.securityDeviceId}-") }
+        def switchChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.automationDeviceId}-") }
+        
+        switchChildren.each { 
+        	try {
+            	log.debug "(Switch) SmartThings State is: " + it.currentStatus
+                String switchId = it.getDeviceNetworkId().split("-")[2] //takes switchId from deviceNetworkID in format "TC-DeviceID-SwitchID"
+                
+                log.debug "SwitchId is " + switchId
+                
+                if(state.switchStatus.containsKey(switchId)) {
+                	def switchState = state.switchStatus.get(switchId)
+                    log.debug "(Switch) Polled State is: ${switchState}"
+                    
+                    switch(switchState) {
+                    	case "0":
+							log.debug "Status is: Closed"
+							if(it.currentStatus != "Closed") {
+	    	                	sendEvent(it, [name: "status", value: "Closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true"]) }
+                            break
+                    	case "1":
+							log.debug "Status is: Open"
+							if(it.currentStatus != "Open") {
+                           		sendEvent(it, [name: "status", value: "Open", displayed: "true", description: "Refresh: Garage Door is Open", isStateChange: "true"]) }
+                            break
+                    	default:
+    						log.error "Attempted to update switchState to ${switchState}. Only valid states are 0 or 1."
+                            break
+    				}
+				}
+				else {
+					log.debug "SwitchId ${switchId} does not exist"
+				}
+      		} catch (e) {
+      			log.error("Error Occurred Updating Device " + it.displayName + ", Error " + e)
+      		}
+        }    
+        zoneChildren.each { 
+        	try {
+                String zoneId = it.getDeviceNetworkId().split("-")[2] //takes zoneId from deviceNetworkID in format "TC-DeviceID-ZoneID"
+                String zoneName = it.getDisplayName()
+                log.debug "Zone ${zoneId} - ${zoneName}"
+                //log.debug "(Sensor) SmartThings State is: " + it.currentContact
+                
+                if(state.zoneStatus.containsKey(zoneId)) {
+                   	String currentStatus = state.zoneStatus.get(zoneId)
+                	//log.debug "(Sensor) Polled State is: " + currentStatus
+                    def events = []
+                    
+                    switch(currentStatus) {
+                    	case "0":                    
+                            log.debug "Zone ${zoneId} is OK"
+                            events << [name: "contact", value: "closed"]
+                            //sendEvent(it, [name: "status", value: "closed", displayed: "true", description: "Refresh: Zone is closed", isStateChange: "true"])
+                            if(it.hasCapability("motionSensor")) {
+                                events << [name: "motion", value: "active"]
+                                //sendEvent(it, [name: "motion", value: "active", displayed: "true", description: "Refresh: No Motion detected in Zone", isStateChange: "true"])
+                            }//if motion sensor, update that as well (maybe do this in the device handler?)
+                            break
+                    	case "1":                    
+                            log.debug "Zone ${zoneId} is Bypassed"
+							events << [name: "contact", value: "bypassed"]
+                            //sendEvent(it, [name: "contact", value: "bypassed", displayed: "true", description: "Refresh: Zone is bypassed", isStateChange: "true"])
+                            break
+                    	case "2":                    
+                            log.debug "Zone ${zoneId} is Faulted"
+							events << [name: "contact", value: "open"]
+                            //sendEvent(it, [name: "contact", value: "open", displayed: "true", description: "Refresh: Zone is Faulted", isStateChange: "true"])
+                            if(it.hasCapability("motionSensor")) {
+                                //sendEvent(it, [name: "motion", value: "active", displayed: "true", description: "Refresh: Motion detected in Zone", isStateChange: "true"])
+                            }//if motion sensor, update that as well (maybe do this in the device handler?)
+                            break
+                    	case "8":                    
+                            log.debug "Zone ${zoneId} is Troubled"
+							events << [name: "contact", value: "trouble"]
+                            //sendEvent(it, [name: "contact", value: "trouble", displayed: "true", description: "Refresh: Zone is Troubled", isStateChange: "true"])
+                            break
+                    	case "16":                    
+                            log.debug "Zone ${zoneId} is Tampered"
+							events << [name: "contact", value: "tampered"]
+                            //sendEvent(it, [name: "contact", value: "tampered", displayed: "true", description: "Refresh: Zone is Tampered", isStateChange: "true"])
+                            break
+                    	case "32":                    
+                            log.debug "Zone ${zoneId} is Failed"
+							events << [name: "contact", value: "failed"]
+                            //sendEvent(it, [name: "contact", value: "failed", displayed: "true", description: "Refresh: Zone is Failed", linkText: "Zone ${zoneId} - ${zoneName}", isStateChange: "true"])
+                            break
+                        default:
+                			log.error "Zone ${zoneId} returned an unexpected value.  ZoneStatus: ${currentStatus}"
+							break
+                    }//switch(currentStatus)
+					
+                    it.generateEvent(events)
+				}//if(state.zoneStatus.containsKey(zoneId)) 
+                else {
+					log.debug "ZoneId ${zoneId} does not exist"
+				}//else
+      		} catch (e) {
+      			log.error("Error Occurred Updating Sensor "+it.displayName+", Error " + e)
+      		}// try/catch
+        }//zoneChildren.each
+        log.debug "Finished Updating"
+        return true
+}//updateStatuses()
+
+def tcCommand(String path, Map body) {
+	def response
+	def params = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/",	
+		path: path,
+    	body: body
+    ]
+
+    try {
+    	httpPost(params) { resp ->
+        	response = resp.data
+        }//Post Command
+        
+        state.tokenRefresh = now() //we ran a successful command, that will keep the token alive
+    } catch (SocketTimeoutException e) {
+        //identify a timeout and retry?
+		log.error "Timeout Error: $e"
+        //response = tcCommand(path, body) //retry command if it fails due to a timeout
+    } catch (e) {
+    	log.error "Something went wrong: $e"
+	}//try / catch for httpPost
+
+    return response
+}//post command to catch any issues and possibly retry command
