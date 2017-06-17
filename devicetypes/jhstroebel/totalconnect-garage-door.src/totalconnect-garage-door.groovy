@@ -27,9 +27,12 @@ preferences {
 }
 metadata {
 	definition (name: "TotalConnect Garage Door", namespace: "jhstroebel", author: "Jeremy Stroebel") {
-	capability "Refresh"
-	capability "Switch"
     capability "Garage Door Control"
+	capability "Switch"
+	capability "Momentary"
+	capability "Contact Sensor"
+	capability "Refresh"
+    
     attribute "status", "string"
 }
 
@@ -40,8 +43,8 @@ simulator {
 tiles {
 		standardTile("toggle", "device.status", width: 2, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
-			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Open")
-			state("Open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"Closed")
+			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Opening")
+			state("Open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"Closing")
 			state("Opening", label:'${name}', icon:"st.doors.garage.garage-opening", backgroundColor:"#e86d13")
 			state("Closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
 		}
@@ -60,60 +63,9 @@ tiles {
 	}
 }
 
-def controlSwitch(int switchAction) {		   
-	def token = login(token)
-	def deviceId = settings.deviceId
-	def switchId = settings.switchId
-	def paramsControl = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/ControlASwitch",
-		body: [SessionID: token, DeviceID: deviceId, SwitchID: switchId, SwitchAction: switchAction]
-	]
-	httpPost(paramsControl) // Sending Switch Control
-    logout(token)
-}
-
-/* Think this was an attempt to update but used events instead...
-def updateStatus(Integer switchState) {
-	log.debug switchState
-
-    if (switchState == 0) {
-		log.debug "Status is: Closed"
-		sendEvent(name: "status", value: "Closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true") 
-    } else if (switchState == 1) {
-		log.debug "Status is: Open"
-		sendEvent(name: "status", value: "Open", displayed: "true", description: "Refresh: Garage Door is Open", isStateChange: "true")
-	} else {
-    	log.error "Attempted to update switchState to ${switchState}. Only valid states are 0 or 1."
-    }
-}
-*/
-
 def refresh() {
-	def token = login(token)
-   	def deviceId = settings.deviceId
-	def switchId = settings.switchId.toInteger()
-	def switchState
-    log.debug "Doing SwitchState refresh"
-	def metaData = automationDeviceStatus(token, deviceId) // Gets Information
-	//log.debug metaData
-	if(metaData.containsKey(switchId)) {
-		switchState = metaData.get(switchId)
-	}
-	else {
-		log.debug "SwitchId ${switchId} does not exist"
-	}
+	parent.pollChildren(device)
 
-	log.debug switchState
-
-    if (switchState == 0) {
-		log.debug "Status is: Closed"
-		sendEvent(name: "status", value: "Closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true") 
-    } else if (switchState == 1) {
-		log.debug "Status is: Open"
-		sendEvent(name: "status", value: "Open", displayed: "true", description: "Refresh: Garage Door is Open", isStateChange: "true")
-	}
-
-	logout(token)
 	sendEvent(name: "refresh", value: "true", displayed: "true", description: "Refresh Successful") 
 }
 
@@ -127,11 +79,64 @@ def parse(Map description) {
     sendEvent(description)
 }
 
+// parse events into attributes
+def generateEvent(List events) {
+	//Default Values
+    def isChange = false
+	def isDisplayed = true
+    
+    events.each { it ->
+    	log.debug it
+        def name = it.get("name")
+        def value = it.get("value")
+        
+    	if(device.currentState(name).value == value) {
+        	isChange = false
+        } else {
+        	isChange = true
+        }//if event isn't a change to that attribute
+        
+        isDisplayed = isChange
+        
+    	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
+	}//goes through events if there are multiple
+}//generateEvent
+
 // handle commands
+def open() {
+	on()
+}
+
+def close() {
+	off()
+}
+
+def push() {    
+    def latest = device.latestValue("door");
+	log.debug "Garage door push button, current state $latest"
+
+	switch (latest) {
+    	case "open":
+        	log.debug "Closing garage door"
+        	close()
+            sendEvent(name: "momentary", value: "pushed", isStateChange: true)
+            break
+            
+        case "closed":
+        	log.debug "Opening garage door"
+        	open()
+            sendEvent(name: "momentary", value: "pushed", isStateChange: true)
+            break
+            
+        default:
+        	log.debug "Can't change state of door, unknown state $latest"
+            break
+    }
+}
 
 def on() {
 	log.debug "Executing 'Open'"
-	controlSwitch(1)
+	parent.controlSwitch(device, 1)
 	sendEvent(name: "switch", value: "on", displayed: "true", description: "Opening") 
 	sendEvent(name: "status", value: "Open", displayed: "true", description: "Updating Status: Opening Garage Door") 
 	runIn(15,refresh)
@@ -139,7 +144,7 @@ def on() {
 
 def off() {
 	log.debug "Executing 'Closed'"
-	controlSwitch(0)
+	parent.controlSwitch(device, 0)
 	sendEvent(name: "switch", value: "off", displayed: "true", description: "Closing") 
 	sendEvent(name: "status", value: "Close", displayed: "true", description: "Updating Status: Closing Garage Door") 
 	runIn(15,refresh)

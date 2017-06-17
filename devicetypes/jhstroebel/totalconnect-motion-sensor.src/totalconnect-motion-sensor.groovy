@@ -53,51 +53,9 @@ metadata {
 		}
 }
 
-// Zone status Information is below
-// 0 – Normal
-// 1 – Bypassed
-// 2 – Faulted
-// 8 – Trouble
-// 16 – Tampered
-// 32 – Supervision Failed
-
 def refresh() {		   
-	def token = login(token)
-	String zname = device.name
-	String locationId = settings.locationId
-	String zoneID = settings.zoneID
+	parent.pollChildren(device)
     
-    log.debug "Zname: ${zname}, zoneID: ${zoneID}"
-    
-    log.debug "Doing zone refresh"
-	def metaData = zoneMetaData(token, locationId) // Gets Information
-	
-//    log.debug "Metadata " + metaData
-    def currentStatus = metaData.get(zoneID)
-    
-    log.debug "Polled ZoneStatus is: " + currentStatus
-    
-    if (currentStatus == "0") {
-    	log.debug "Zone ${zoneID} is OK"
-        sendEvent(name: "contact", value:"closed", displayed: "true", description: "Refresh: Zone is closed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-    } else if (currentStatus == "1") {
-    	log.debug "Zone ${zoneID} is Bypassed"
-        sendEvent(name: "contact", value:"bypassed", displayed: "true", description: "Refresh: Zone is bypassed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
- 	} else if (currentStatus == "2") {
-    	log.debug "Zone ${zoneID} is Faulted"
-        sendEvent(name: "contact", value:"open", displayed: "true", description: "Refresh: Zone is Faulted", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (currentStatus == "8") {
-    	log.debug "Zone ${zoneID} is Troubled"
-        sendEvent(name: "contact", value:"trouble", displayed: "true", description: "Refresh: Zone is Troubled", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (currentStatus == "16") {
-    	log.debug "Zone ${zoneID} is Tampered"
-        sendEvent(name: "contact", value:"tampered", displayed: "true", description: "Refresh: Zone is Tampered", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (currentStatus == "32") {
-    	log.debug "Zone ${zoneID} is Failed"
-        sendEvent(name: "contact", value:"failed", displayed: "true", description: "Refresh: Zone is Failed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-	 } 
-     
-	logout(token)
 	sendEvent(name: "refresh", value: "true", displayed: "true", description: "Refresh Successful") 
 }
 
@@ -107,60 +65,33 @@ def parse(String description) {
 }
 
 // parse events into attributes
-def parse(Map description) {
-	log.debug "Parsing '${description}'"
-    sendEvent(description)
-}
-
-def updateSensor(String status) {
-	String zname = device.name
-	String zoneID = settings.zoneID
-    if (status == "0") {
-    	log.debug "Zone ${zoneID} is OK"
-        sendEvent(name: "contact", value:"closed", displayed: "true", description: "Refresh: Zone is closed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-    } else if (status == "1") {
-    	log.debug "Zone ${zoneID} is Bypassed"
-        sendEvent(name: "contact", value:"bypassed", displayed: "true", description: "Refresh: Zone is bypassed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
- 	} else if (status == "2") {
-    	log.debug "Zone ${zoneID} is Faulted"
-        sendEvent(name: "contact", value:"open", displayed: "true", description: "Refresh: Zone is Faulted", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (status == "8") {
-    	log.debug "Zone ${zoneID} is Troubled"
-        sendEvent(name: "contact", value:"trouble", displayed: "true", description: "Refresh: Zone is Troubled", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (status == "16") {
-    	log.debug "Zone ${zoneID} is Tampered"
-        sendEvent(name: "contact", value:"tampered", displayed: "true", description: "Refresh: Zone is Tampered", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-     } else if (status == "32") {
-    	log.debug "Zone ${zoneID} is Failed"
-        sendEvent(name: "contact", value:"failed", displayed: "true", description: "Refresh: Zone is Failed", linkText: "Zone ${zoneID} - ${zname}", isStateChange: "true")
-	 }
-     else {
-     	log.error "Zone ${zoneId} returned an unexpected value.  ZoneStatus: ${currentStatus}"
-     }
-     
-	sendEvent(name: "refresh", value: "true", displayed: "true", description: "Refresh Successful") 
-}
+def generateEvent(List events) {
+	//Default Values
+    def isChange = false
+	def isDisplayed = true
+    
+    events.each { it ->
+    	log.debug it
+        def name = it.get("name")
+        def value = it.get("value")
+        
+    	if(device.currentState(name).value == value) {
+        	isChange = false
+        } else {
+        	isChange = true
+        }//if event isn't a change to that attribute
+        
+        isDisplayed = isChange
+        
+    	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
+	}//goes through events if there are multiple
+}//generateEvent
 
 def off() {
-	log.debug "Bypassing Sensor"
-	def token = login(token)
-	def zname = device.name
-	def bypassok
-	def deviceID = settings.deviceId	
-	def locationId = settings.locationId
-	String zoneID = settings.zoneID
-	def metaData = zoneMetaData(token, locationId) // Gets Informationbypass()
-	log.debug "Bypassing Zone: ${zoneID}"
-	def bypass = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Bypass",
-		body: [ SessionID: token, LocationID: locationId, DeviceID: deviceID, Zone: "${zoneID}", UserCode: '-1']
-	]
-//    log.debug bypass
-	httpPost(bypass) {	response -> 
-        bypassok = response.data
-	}
-logout(token)
+    log.debug "Bypassing Sensor"
+	parent.bypassSensor(device)
+
 	sendEvent(name: "switch", value: "off", displayed: "true", description: "Bypassing") 
 	sendEvent(name: "contact", value: "bypassed", displayed: "true", description: "Status: Zone Bypassed")
     runIn(15,refresh)
-}
+}//bypass method

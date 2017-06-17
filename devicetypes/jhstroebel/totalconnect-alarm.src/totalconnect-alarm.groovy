@@ -39,11 +39,14 @@ simulator {
 tiles {
 		standardTile("toggle", "device.status", width: 2, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.Office.office9", backgroundColor:"#ffa81e")
-			state("Armed Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarmed")
-			state("Disarmed", label:'${name}', action:"lock.lock", icon:"st.Home.home2", backgroundColor:"#a8a8a8", nextState:"Armed Away")
-			state("Armed Away", label:'${name}', action:"switch.off", icon:"st.Home.home3", backgroundColor:"#79b821", nextState:"Disarmed")
-            state("Arming", label:'${name}', icon:"st.Home.home4", backgroundColor:"#ffa81e")
+			state("Arming", label:'${name}', icon:"st.Home.home4", backgroundColor:"#ffa81e")
+			state("Armed Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
+			state("Armed Stay - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
+			state("Armed Night Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
+			state("Armed Away", label:'${name}', action:"switch.off", icon:"st.Home.home3", backgroundColor:"#79b821", nextState:"Disarming")
+			state("Armed Away - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
 			state("Disarming", label:'${name}', icon:"st.Home.home2", backgroundColor:"#ffa81e")
+			state("Disarmed", label:'${name}', action:"lock.lock", icon:"st.Home.home2", backgroundColor:"#a8a8a8", nextState:"Arming")
 		}
 		standardTile("statusstay", "device.status", inactiveLabel: false, decoration: "flat") {
 			state "default", label:'Arm Stay', action:"switch.on", icon:"st.Home.home4"
@@ -66,7 +69,7 @@ tiles {
 // Arm Function. Performs arming function
 def armAway() {		   
 	parent.armAway(this)
-
+/*
 	def metaData = panelMetaData(token, locationId) // Get AlarmCode
 	if (metaData.alarmCode == 10201) {
 		log.debug "Status is: Already Armed Away"
@@ -78,11 +81,12 @@ def armAway() {
 		log.debug "Status is: Arming"
         httpPost(paramsArm) // Arming Function in away mode
     }
+*/
 }
 
 def armStay() {		   
 	parent.armStay(this)
-
+/*
 	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
 	if (metaData.alarmCode == 10203) {
 		log.debug "Status is: Already Armed Stay"
@@ -94,11 +98,12 @@ def armStay() {
 		log.debug "Status is: Arming"
         httpPost(paramsArm) // Arming function in stay mode
     }
+*/
 }
 
 def disarm() {
 	parent.disarm(this)
-    
+/*    
 	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
 	if (metaData.alarmCode == 10200) {
 		log.debug "Status is: Already Disarmed"
@@ -107,27 +112,12 @@ def disarm() {
 		log.debug "Status is: Disarming"
 		httpPost(paramsDisarm)	
 	} 
+*/
 }
 
 def refresh() {		   
-	def token = login(token)
-	def locationId = settings.locationId
-	def deviceId = settings.deviceId
-	log.debug "Doing refresh"
-	//httpPost(paramsArm) // Arming function in stay mode
-	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
-	//log.debug metaData   
-	if (metaData.alarmCode == 10200) {
-		log.debug "Status is: Disarmed"
-		sendEvent(name: "status", value: "Disarmed", displayed: "true", description: "Refresh: Alarm is Disarmed") 
-	} else if (metaData.alarmCode == 10203) {
-		log.debug "Status is: Armed Stay"
-		sendEvent(name: "status", value: "Armed Stay", displayed: "true", description: "Refresh: Alarm is Armed Stay") 
-	} else if (metaData.alarmCode == 10201) {
-		log.debug "Status is: Armed Away"
-		sendEvent(name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away")
-	}
-	logout(token)
+	parent.pollChildren(device)
+    
 	sendEvent(name: "refresh", value: "true", displayed: "true", description: "Refresh Successful") 
 }
 
@@ -140,6 +130,29 @@ def parse(Map description) {
 	log.debug "Parsing '${description}'"
     sendEvent(description)
 }
+
+// parse events into attributes
+def generateEvent(List events) {
+	//Default Values
+    def isChange = false
+	def isDisplayed = true
+    
+    events.each { it ->
+    	log.debug it
+        def name = it.get("name")
+        def value = it.get("value")
+        
+    	if(device.currentState(name).value == value) {
+        	isChange = false
+        } else {
+        	isChange = true
+        }//if event isn't a change to that attribute
+        
+        isDisplayed = isChange
+        
+    	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
+	}//goes through events if there are multiple
+}//generateEvent
 
 // handle commands
 def lock() {
