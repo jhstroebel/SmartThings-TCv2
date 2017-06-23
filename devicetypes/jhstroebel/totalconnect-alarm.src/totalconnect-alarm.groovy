@@ -29,46 +29,86 @@ metadata {
 	capability "Lock"
 	capability "Refresh"
 	capability "Switch"
+    
 	attribute "status", "string"
+    attribute "instant", "string"
+    attribute "zonesBypassed", "string"
+    
+	command "setInstant"
+	command "setDelay"
 }
 
 simulator {
 	// TODO: define status and reply messages here
 }
 
-tiles {
-		standardTile("toggle", "device.status", width: 2, height: 2) {
-			state("unknown", label:'${name}', action:"device.refresh", icon:"st.Office.office9", backgroundColor:"#ffa81e")
-			state("Arming", label:'${name}', icon:"st.Home.home4", backgroundColor:"#ffa81e")
-			state("Armed Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
-			state("Armed Stay - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
-			state("Armed Night Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
-			state("Armed Away", label:'${name}', action:"switch.off", icon:"st.Home.home3", backgroundColor:"#79b821", nextState:"Disarming")
-			state("Armed Away - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming")
-			state("Disarming", label:'${name}', icon:"st.Home.home2", backgroundColor:"#ffa81e")
-			state("Disarmed", label:'${name}', action:"lock.lock", icon:"st.Home.home2", backgroundColor:"#a8a8a8", nextState:"Arming")
+tiles (scale: 2) {
+		multiAttributeTile(name: "toggle", type: "generic", width: 6, height: 4) {
+        	tileAttribute("device.status", key: "PRIMARY_CONTROL"){
+                attributeState "unknown", label:'${name}', action:"device.refresh", icon:"st.Office.office9", backgroundColor:"#ffa81e"
+                attributeState "Arming", label:'${name}', icon:"st.Home.home4", backgroundColor:"#ffa81e"
+                attributeState "Armed Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming"
+                attributeState "Armed Stay - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming"
+                attributeState "Armed Night Stay", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming"
+                attributeState "Armed Away", label:'${name}', action:"switch.off", icon:"st.Home.home3", backgroundColor:"#79b821", nextState:"Disarming"
+                attributeState "Armed Away - Instant", label:'${name}', action:"switch.off", icon:"st.Home.home4", backgroundColor:"#79b821", nextState:"Disarming"
+                attributeState "Disarming", label:'${name}', icon:"st.Home.home2", backgroundColor:"#ffa81e"
+                attributeState "Disarmed", label:'${name}', action:"lock.lock", icon:"st.Home.home2", backgroundColor:"#a8a8a8", nextState:"Arming"
+			}//shows alarm status
+            tileAttribute("device.zonesBypassed", key: "SECONDARY_CONTROL") {
+            	attributeState "true", label:'Zones Bypassed'
+                attributeState "false", label:''
+            }//shows if zones are bypassed
 		}
-		standardTile("statusstay", "device.status", inactiveLabel: false, decoration: "flat") {
+		standardTile("statusstay", "device.status", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", label:'Arm Stay', action:"switch.on", icon:"st.Home.home4"
 		}
-		standardTile("statusaway", "device.status", inactiveLabel: false, decoration: "flat") {
+		standardTile("statusaway", "device.status", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", label:'Arm Away', action:"lock.lock", icon:"st.Home.home3"
 		}
-		standardTile("statusdisarm", "device.status", inactiveLabel: false, decoration: "flat") {
+		standardTile("statusdisarm", "device.status", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", label:'Disarm', action:"switch.off", icon:"st.Home.home2"
 		}
-		standardTile("refresh", "device.status", inactiveLabel: false, decoration: "flat") {
+		standardTile("instant", "device.instant", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+            state "Delay", label:'Delay', action:"setInstant", icon:"st.security.alarm.clear"
+			state "Instant", label:'Instant', action:"setDelay", icon:"st.security.alarm.alarm"
+		}
+		standardTile("refresh", "device.status", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", label:'', action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
 
 		main "toggle"
-		details(["toggle", "statusaway", "statusstay", "statusdisarm", "refresh"])
+		details(["toggle", "statusaway", "statusstay", "statusdisarm", "instant", "refresh"])
 	}
 }
 
+def setInstant() {
+    if(device.currentState("status")?.value == "Disarmed") {
+    	sendEvent(name: "instant", value: "Instant", displayed: "true", description: "Alarm set to Instant")
+        //only set instant while disarmed
+	} else {
+    	log.debug "Cannot set alarm to instant while its alarmed"
+    }//else
+}//setInstant
+
+def setDelay() {
+	if(device.currentState("status")?.value == "Disarmed") {
+    	sendEvent(name: "instant", value: "Delay", displayed: "true", description: "Alarm set to Delay")
+        //only set delay while disarmed
+	} else {
+    	log.debug "Cannot set alarm to delay while its alarmed"
+    }//else
+}//setInstant
+
 // Arm Function. Performs arming function
 def armAway() {		   
-	parent.armAway(this)
+	if(device.currentState("instant")?.value == "Instant")
+    {
+    	parent.armAwayInstant(this)
+    	sendEvent(name: "instant", value: "Delay", displayed: "false", description: "Alarm set to Delay") //reset Delay if on
+	} else {
+		parent.armAway(this)
+	}//if instant is set, armAwayInstant, if not, armAway normally
 /*
 	def metaData = panelMetaData(token, locationId) // Get AlarmCode
 	if (metaData.alarmCode == 10201) {
@@ -82,38 +122,25 @@ def armAway() {
         httpPost(paramsArm) // Arming Function in away mode
     }
 */
-}
+}//armaway()
 
 def armStay() {		   
-	parent.armStay(this)
-/*
-	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
-	if (metaData.alarmCode == 10203) {
-		log.debug "Status is: Already Armed Stay"
-		sendEvent(name: "status", value: "Armed Stay", displayed: "true", description: "Refresh: Alarm is Armed Stay") 
-	} else if (metaData.alarmCode == 10201) {
-		log.debug "Status is: Armed Away - Please Disarm First"
-		sendEvent(name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away") 
-  	} else {
-		log.debug "Status is: Arming"
-        httpPost(paramsArm) // Arming function in stay mode
-    }
-*/
-}
+	if(device.currentState("instant")?.value == "Instant")
+    {
+    	parent.armStayInstant(this)
+    	sendEvent(name: "instant", value: "Delay", displayed: "false", description: "Alarm set to Delay") //reset Delay if on
+	} else {
+		parent.armStay(this)
+	}//if instant is set, armAwayInstant, if not, armAway normally
+}//armstay()
 
 def disarm() {
 	parent.disarm(this)
-/*    
-	def metaData = panelMetaData(token, locationId) // Gets AlarmCode
-	if (metaData.alarmCode == 10200) {
-		log.debug "Status is: Already Disarmed"
-		sendEvent(name: "status", value: "Disarmed", displayed: "true", description: "Refresh: Alarm is Disarmed") 
-	} else {
-		log.debug "Status is: Disarming"
-		httpPost(paramsDisarm)	
-	} 
-*/
-}
+	if(device.currentState("instant")?.value == "Instant")
+    {	
+    	sendEvent(name: "instant", value: "Delay", displayed: "false", description: "Alarm set to Delay") //reset Delay if on
+	}//if instant is set, reset to Delay (default)
+}//disarm()
 
 def refresh() {		   
 	parent.pollChildren(device)
@@ -142,7 +169,7 @@ def generateEvent(List events) {
         def name = it.get("name")
         def value = it.get("value")
         
-    	if(device.currentState(name).value == value) {
+    	if(device.currentState(name)?.value == value) {
         	isChange = false
         } else {
         	isChange = true
@@ -168,7 +195,7 @@ def unlock() {
 	disarm()
 	sendEvent(name: "unlock", value: "unlock", displayed: "true", description: "Disarming") 
 	sendEvent(name: "status", value: "Disarming", displayed: "true", description: "Updating Status: Disarming System") 
-	runIn(15,refresh)
+	runIn(5,refresh)
 }
 
 def on() {
@@ -183,6 +210,6 @@ def off() {
 	log.debug "Executing 'Disarm'"
 	disarm()
 	sendEvent(name: "switch", value: "off", displayed: "true", description: "Disarming") 
-	sendEvent(name: "status", value: "Disarmed", displayed: "true", description: "Updating Status: Disarming System") 
-	runIn(15,refresh)
+	sendEvent(name: "status", value: "Disarming", displayed: "true", description: "Updating Status: Disarming System") 
+	runIn(5,refresh)
 }

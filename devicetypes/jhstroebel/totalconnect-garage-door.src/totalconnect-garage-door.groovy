@@ -41,7 +41,7 @@ simulator {
 }
 
 tiles {
-		standardTile("toggle", "device.status", width: 2, height: 2) {
+		standardTile("toggle", "device.status", width: 3, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
 			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Opening")
 			state("Open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"Closing")
@@ -90,7 +90,7 @@ def generateEvent(List events) {
         def name = it.get("name")
         def value = it.get("value")
         
-    	if(device.currentState(name).value == value) {
+    	if(device.currentState(name)?.value == value) {
         	isChange = false
         } else {
         	isChange = true

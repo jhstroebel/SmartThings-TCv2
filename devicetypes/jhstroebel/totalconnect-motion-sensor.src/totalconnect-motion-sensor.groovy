@@ -34,7 +34,7 @@ metadata {
 
 // UI tile definitions
 	tiles {
-		standardTile("contact", "device.contact", width: 2, height: 2) {
+		standardTile("contact", "device.contact", width: 3, height: 2) {
 			state "open", label: "Faulted", icon: "st.contact.contact.open", backgroundColor: "#FF0000"
 			state "closed", label: 'OK', icon: "st.contact.contact.closed", backgroundColor: "#79b821"
 			state "bypassed", label: 'Bypassed', icon: "st.contact.contact.open", backgroundColor: "#2179b8"
@@ -75,7 +75,7 @@ def generateEvent(List events) {
         def name = it.get("name")
         def value = it.get("value")
         
-    	if(device.currentState(name).value == value) {
+    	if(device.currentState(name)?.value == value) {
         	isChange = false
         } else {
         	isChange = true

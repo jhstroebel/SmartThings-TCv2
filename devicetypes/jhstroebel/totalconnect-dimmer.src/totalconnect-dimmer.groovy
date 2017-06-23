@@ -29,6 +29,7 @@ metadata {
 	definition (name: "TotalConnect Dimmer", namespace: "jhstroebel", author: "Jeremy Stroebel") {
 	capability "Refresh"
 	capability "Switch"
+    capability "Switch Level"
     attribute "status", "string"
 }
 
