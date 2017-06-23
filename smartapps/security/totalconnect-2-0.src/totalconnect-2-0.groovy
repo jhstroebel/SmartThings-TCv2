@@ -17,7 +17,7 @@
  *
  *  Future Changes Needed
  *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
- *      - Implement thermostats & locks
+ *      - Implement Dimmers, Thermostats, & Locks
  *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this, but could provide a device that would give a dashboard view
  *		- Armed Away from Armed Stay or vice versa does not work.  Must disarm first (does not currently handle)
  *		- Change updates from syncronous post calls to async calls (requires rewriting update mechanisms to call, and then handle when response comes)
