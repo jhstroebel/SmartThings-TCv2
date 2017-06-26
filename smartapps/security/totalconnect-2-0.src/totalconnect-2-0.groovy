@@ -111,8 +111,8 @@ def authPage() {
 				input "applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32"
 				paragraph "These are required for device control:"
             	input "locationId", "text", title: "Location ID - Do not change", description: "Location ID", defaultValue: locations?.get(selectedLocation) ?: ""
-				input "securityDeviceId", "text", title: "Security Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("Security Panel")
-       	    	input "automationDeviceId", "text", required:false, title: "Automation Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("Automation")
+				input "securityDeviceId", "text", title: "Security Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("1") //deviceMap?.get("Security Panel")
+       	    	input "automationDeviceId", "text", required:false, title: "Automation Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("3") //deviceMap?.get("Automation")
 			}//section
 
 		}//dynamicPage, Only show this page if missing authentication
@@ -240,22 +240,27 @@ Map getDeviceIDs(targetLocationId) {
     log.debug "TargetLocationID: ${targetLocationId}"
     def locationId
     String deviceName
+    String deviceClassId
     String deviceId
     Map deviceMap = [:]
 	
     def response = tcCommand("GetSessionDetails", [SessionID: state.token, ApplicationID: applicationId, ApplicationVersion: applicationVersion])
-	response.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
+    
+    response.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
 		locationId = LocationInfoBasic.LocationID
 		if(locationId == targetLocationId) {
-			LocationInfoBasic.DeviceList.DeviceInfoBasic.each { DeviceInfoBasic ->
-				deviceName = DeviceInfoBasic.DeviceName
-				deviceId = DeviceInfoBasic.DeviceID
-				deviceMap.put(deviceName, deviceId)
+        	//deviceId = LocationInfoBasic.SecurityDeviceID
+            LocationInfoBasic.DeviceList.DeviceInfoBasic.each { DeviceInfoBasic ->
+				//deviceName = DeviceInfoBasic.DeviceName
+				deviceClassId = DeviceInfoBasic.DeviceClassID
+                deviceId = DeviceInfoBasic.DeviceID
+				//deviceMap.put(deviceName, deviceId)
+                deviceMap.put(deviceClassId, deviceId)
 			}//iterate throught DeviceIDs
 		}//Only get DeviceIDs for the desired location
 	}//LocationInfoBasic.each
     
-	//log.debug "DeviceID map is " + deviceMap
+	log.debug "DeviceID map is " + deviceMap
     
   	return deviceMap
 } // Should return Map of Devices associated to the given location
