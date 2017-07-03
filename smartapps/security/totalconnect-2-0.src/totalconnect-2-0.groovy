@@ -8,12 +8,21 @@
  *      - Added Autodiscover for Automation and Security Panel DeviceIDs
  *      - Added Iteration of devices to add (did all automation devices even though I only want a non-zwave garage door)
  *   	- Removed Success Page (unneccesary)
+ *
  * Version: v1.0
  *	Changes [Jun 19th, 2017]
  *		- Too many to list.  Morphed into full service manager.
  *		- Code credits for TotalConnect pieces go to mhatrey, bdwilson, QCCowboy.  Without these guys, this would have never started
  *		- Reference credit to StrykerSKS (for Ecobee SM) and infofiend (for FLEXi Lighting) where ideas and code segments came from for the SM piece
  *      - Moved from open ended polling times (in seconds) to a list.  This allows us to use better scheduling with predictable options 1 minute and over.
+ *
+ * Version 1.1
+ *  Changes [Jun 26, 2017]
+ *		- Updated deviceID detection code to use deviceClassId instead of Name since that works on more panels (Vista 20P tested)
+ *
+ * Version 2.0
+ *  Changes [June 29, 2017]
+ *		- Moved polling methods to async methods (increased timeout, etc)
  *
  *  Future Changes Needed
  *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
@@ -35,12 +44,14 @@
  *
  */
 
+include 'asynchttp_v1'
+
 definition(
     name: "TotalConnect 2.0",
     namespace: "Security",
     author: "Jeremy Stroebel",
     description: "Total Connect 2.0 Service Manager",
-    category: "My Apps",
+    category: "My Apps", //Safety & Security"
     iconUrl: "https://s3.amazonaws.com/yogi/TotalConnect/150.png",
     iconX2Url: "https://s3.amazonaws.com/yogi/TotalConnect/300.png",
     singleInstance: true)
@@ -573,10 +584,10 @@ def spawnDaemon() {
                 	runEvery1Minute(panelAutoUpdater)
                     break
                 case 300:
-                	runEvery5Minute(panelAutoUpdater)
+                	runEvery5Minutes(panelAutoUpdater)
                     break
 				case 600:
-                	runEvery10Minute(panelAutoUpdater)
+                	runEvery10Minutes(panelAutoUpdater)
                     break
                 default:
                     runIn(settings.panelPollingInterval.toInteger(), panelAutoUpdater)
@@ -589,10 +600,10 @@ def spawnDaemon() {
                 	runEvery1Minute(zoneAutoUpdater)
                     break
                 case 300:
-                	runEvery5Minute(zoneAutoUpdater)
+                	runEvery5Minutes(zoneAutoUpdater)
                     break
 				case 600:
-                	runEvery10Minute(zoneAutoUpdater)
+                	runEvery10Minutes(zoneAutoUpdater)
                     break
                 default:
                     runIn(settings.zonePollingInterval.toInteger(), zoneAutoUpdater)
@@ -605,10 +616,10 @@ def spawnDaemon() {
                 	runEvery1Minute(automationAutoUpdater)
                     break
                 case 300:
-                	runEvery5Minute(automationAutoUpdater)
+                	runEvery5Minutes(automationAutoUpdater)
                     break
 				case 600:
-                	runEvery10Minute(automationAutoUpdater)
+                	runEvery10Minutes(automationAutoUpdater)
                     break
                 default:
                     runIn(settings.automationPollingInterval.toInteger(), automationAutoUpdater)
@@ -624,8 +635,11 @@ def spawnDaemon() {
 def panelAutoUpdater() {
 	if(((now()-state.alarmStatusRefresh)/1000) > (settings.panelPollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Panel Status at ${new Date()}"
-		state.alarmStatus = alarmPanelStatus()
+		//tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
+
+        state.alarmStatus = alarmPanelStatus()
         updateStatuses()
+
     } else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
@@ -637,8 +651,11 @@ def panelAutoUpdater() {
 def zoneAutoUpdater() {
 	if(((now()-state.zoneStatusRefresh)/1000) > (settings.zonePollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Zone Status at ${new Date()}"
+        //tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+
 		state.zoneStatus = zoneStatus()
         updateStatuses()
+
     } else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
@@ -650,9 +667,12 @@ def zoneAutoUpdater() {
 def automationAutoUpdater() {
 	if(((now()-state.automationStatusRefresh)/1000) > (settings.automationPollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Automation Status at ${new Date()}"
-		state.switchStatus = automationDeviceStatus()
+        //tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
+        
+        state.switchStatus = automationDeviceStatus()
 		updateStatuses()
-    } else {
+
+	} else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
 	if(settings.automationPollingInterval.toInteger() < 60) {
@@ -1130,132 +1150,144 @@ Map automationDeviceStatus() {
 
 def updateStatuses() {
 	if(settings.alarmDevice) { 
-       	try {
-			if(state.alarmStatus) {
-				def deviceID = "TC-${settings.securityDeviceId}"
-				def d = getChildDevice(deviceID)
-				def currentStatus = state.alarmStatus
-				                
-				switch(currentStatus) {
-					case "10211": //technically this is Disarmed w/ Zone Bypassed
-					case "10200":
-                        //log.debug "Polled Status is: Disarmed"
-                        if(d.currentStatus != "Disarmed") {
-                           	sendEvent(d, [name: "status", value: "Disarmed", displayed: "true", description: "Refresh: Alarm is Disarmed"]) 
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "off")
-							}//if integration is enabled, update SHM alarm status
-                        }//if current status isn't Disarmed
-                        break
-					case "10202": //technically this is Armed Away w/ Zone Bypassed
-					case "10201":
-						//log.debug "Polled Status is: Armed Away"
-						if(d.currentStatus != "Armed Away") {
-							sendEvent(d, [name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away"])  
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "away")
-							}//if integration is enabled, update SHM alarm status
-                        }//if current status isn't Armed Away
-						break
-					case "10204": //technically this is Armed Stay w/ Zone Bypassed
-					case "10203":
-						//log.debug "Polled Status is: Armed Stay"
-						if(d.currentStatus != "Armed Stay") {
-							sendEvent(d, [name: "status", value: "Armed Stay", displayed: "true", description: "Refresh: Alarm is Armed Stay"])   
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "stay")
-							}//if integration is enabled, update SHM alarm status
-                        }//if current status isn't Armed Stay
-						break
-					case "10206": //technically this is Armed Away - Instant w/ Zone Bypassed
-					case "10205":
-						//log.debug "Polled Status is: Armed Away - Instant"
-						if(d.currentStatus != "Armed Stay - Instant") {
-							sendEvent(d, [name: "status", value: "Armed Away - Instant", displayed: "true", description: "Refresh: Alarm is Armed Away - Instant"])    
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "away")
-							}//if integration is enabled, update SHM alarm status
-                        }//if current status isn't Armed Away - Instant
-						break
-					case "10210": //technically this is Armed Stay - Instant w/ Zone Bypassed
-					case "10209":
-						//log.debug "Polled Status is: Armed Stay - Instant"
-						if(d.currentStatus != "Armed Stay - Instant") {
-							sendEvent(d, [name: "status", value: "Armed Stay - Instant", displayed: "true", description: "Refresh: Alarm is Armed Stay - Instant"])    
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "stay")
-							}//if integration is enabled, update SHM alarm status
-                        }//if current status isn't Armed Stay - Instant
-						break                            
-					case "10218":
-						//log.debug "Polled Status is: Armed Night Stay"
-						if(d.currentStatus != "Armed Night Stay") {
-							sendEvent(d, [name: "status", value: "Armed Night Stay", displayed: "true", description: "Refresh: Alarm is Armed Night Stay"])    
-							if(settings.alarmDevice && settings.shmIntegration) {
-    							sendLocationEvent(name: "alarmSystemStatus", value: "stay")
-							}//if integration is enabled, update SHM alarm status (calling Armed Night Stay as Stay)
-                        }//if current status isn't Armed Night Stay
-						break
-						
-					/* These cases don't seem to show up on my panel so I am commenting them out unless someone can prove they are real.  They are not implemented in the Device Handler either
-					 * Disarming is instant... not sure it would show up anyway
-					case "10307":
-						log.debug "Polled Status is: Arming"
-						if(d.currentStatus != "Arming") {
-							sendEvent(d, [name: "status", value: "Arming", displayed: "true", description: "Refresh: Alarm is Arming"])
-                        	//refresh device 3 seconds later?
-                        }
-						break 
-					case "10308":
-						log.debug "Polled Status is: Disarming"
-						if(d.currentStatus != "Disarming") {
-							sendEvent(d, [name: "status", value: "Disarming", displayed: "true", description: "Refresh: Alarm is Disarming"])
-							//refresh device 3 seconds later?
-						}
-						break
-					*/
-					
-					default:
-						log.error "Alarm Status returned an irregular value " + currentStatus
-						break
-				}//switch(currentStatus) for alarm status
-								
-				switch(currentStatus) {
-					//cases where zone is bypassed
-					case "10211": //Disarmed w/ Zone Bypassed
-					case "10202": //Armed Away w/ Zone Bypassed
-					case "10204": //Armed Stay w/ Zone Bypassed
-					case "10206": //Armed Away - Instant w/ Zone Bypassed
-					case "10210": //Armed Stay - Instant w/ Zone Bypassed
-						if(d.currentZonesBypassed != "true") {
-							sendEvent(d, [name: "zonesBypassed", value: "true", displayed: "true", description: "Refresh: Alarm zones are bypassed"]) }
-						break
-					
-					//cases where zone is not bypassed
-					case "10200": //Disarmed
-					case "10201": //Armed Away
-					case "10203": //Armed Stay
-					case "10205": //Armed Away - Instant
-					case "10209": //Armed Stay - Instant
-					case "10218": //Armed Night Stay
-						if(d.currentZonesBypassed != "false") {
-                           	sendEvent(d, [name: "zonesBypassed", value: "false", displayed: "true", description: "Refresh: Alarm zones are not bypassed"]) }
-						break
-					
-					default:
-						//log.error "Alarm Status returned an irregular value " + currentStatus
-						break
-				}//switch(currentStatus) for zonesBypassed (this is way shorter than dealing with all cases in 1 switch
-				
-				sendEvent(name: "refresh", value: "true", displayed: "true", description: "Alarm Refresh Successful") 
-			} else {
-				log.error "Alarm Code does not exist"
-			}//alarm code doesn't exist
-      	} catch (e) {
-      		log.error("Error Occurred Updating Alarm: " + e)
-      	}// try/catch block
+       	updateAlarmStatus()
 	}//if(settings.alarmDevice)
-    
+
+	updateSwitchStatuses()
+	updateZoneStatuses()
+
+	log.debug "Finished Updating"
+	return true
+}//legacy method used to update statuses, delete after transitioning to new method
+
+def updateAlarmStatus() {
+    try {
+		if(state.alarmStatus) {
+			def deviceID = "TC-${settings.securityDeviceId}"
+			def d = getChildDevice(deviceID)
+			def currentStatus = state.alarmStatus
+			                
+			switch(currentStatus) {
+				case "10211": //technically this is Disarmed w/ Zone Bypassed
+				case "10200":
+                    //log.debug "Polled Status is: Disarmed"
+                    if(d.currentStatus != "Disarmed") {
+                       	sendEvent(d, [name: "status", value: "Disarmed", displayed: "true", description: "Refresh: Alarm is Disarmed"]) 
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "off")
+						}//if integration is enabled, update SHM alarm status
+                    }//if current status isn't Disarmed
+                    break
+				case "10202": //technically this is Armed Away w/ Zone Bypassed
+				case "10201":
+					//log.debug "Polled Status is: Armed Away"
+					if(d.currentStatus != "Armed Away") {
+						sendEvent(d, [name: "status", value: "Armed Away", displayed: "true", description: "Refresh: Alarm is Armed Away"])  
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "away")
+						}//if integration is enabled, update SHM alarm status
+                    }//if current status isn't Armed Away
+					break
+				case "10204": //technically this is Armed Stay w/ Zone Bypassed
+				case "10203":
+					//log.debug "Polled Status is: Armed Stay"
+					if(d.currentStatus != "Armed Stay") {
+						sendEvent(d, [name: "status", value: "Armed Stay", displayed: "true", description: "Refresh: Alarm is Armed Stay"])   
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "stay")
+						}//if integration is enabled, update SHM alarm status
+                    }//if current status isn't Armed Stay
+					break
+				case "10206": //technically this is Armed Away - Instant w/ Zone Bypassed
+				case "10205":
+					//log.debug "Polled Status is: Armed Away - Instant"
+					if(d.currentStatus != "Armed Stay - Instant") {
+						sendEvent(d, [name: "status", value: "Armed Away - Instant", displayed: "true", description: "Refresh: Alarm is Armed Away - Instant"])    
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "away")
+						}//if integration is enabled, update SHM alarm status
+                    }//if current status isn't Armed Away - Instant
+					break
+				case "10210": //technically this is Armed Stay - Instant w/ Zone Bypassed
+				case "10209":
+					//log.debug "Polled Status is: Armed Stay - Instant"
+					if(d.currentStatus != "Armed Stay - Instant") {
+						sendEvent(d, [name: "status", value: "Armed Stay - Instant", displayed: "true", description: "Refresh: Alarm is Armed Stay - Instant"])    
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "stay")
+						}//if integration is enabled, update SHM alarm status
+                    }//if current status isn't Armed Stay - Instant
+					break                            
+				case "10218":
+					//log.debug "Polled Status is: Armed Night Stay"
+					if(d.currentStatus != "Armed Night Stay") {
+						sendEvent(d, [name: "status", value: "Armed Night Stay", displayed: "true", description: "Refresh: Alarm is Armed Night Stay"])    
+						if(settings.alarmDevice && settings.shmIntegration) {
+    						sendLocationEvent(name: "alarmSystemStatus", value: "stay")
+						}//if integration is enabled, update SHM alarm status (calling Armed Night Stay as Stay)
+                    }//if current status isn't Armed Night Stay
+					break
+					
+				/* These cases don't seem to show up on my panel so I am commenting them out unless someone can prove they are real.  They are not implemented in the Device Handler either
+				 * Disarming is instant... not sure it would show up anyway
+				case "10307":
+					log.debug "Polled Status is: Arming"
+					if(d.currentStatus != "Arming") {
+						sendEvent(d, [name: "status", value: "Arming", displayed: "true", description: "Refresh: Alarm is Arming"])
+                    	//refresh device 3 seconds later?
+                    }
+					break 
+				case "10308":
+					log.debug "Polled Status is: Disarming"
+					if(d.currentStatus != "Disarming") {
+						sendEvent(d, [name: "status", value: "Disarming", displayed: "true", description: "Refresh: Alarm is Disarming"])
+						//refresh device 3 seconds later?
+					}
+					break
+				*/
+				
+				default:
+					log.error "Alarm Status returned an irregular value " + currentStatus
+					break
+			}//switch(currentStatus) for alarm status
+							
+			switch(currentStatus) {
+				//cases where zone is bypassed
+				case "10211": //Disarmed w/ Zone Bypassed
+				case "10202": //Armed Away w/ Zone Bypassed
+				case "10204": //Armed Stay w/ Zone Bypassed
+				case "10206": //Armed Away - Instant w/ Zone Bypassed
+				case "10210": //Armed Stay - Instant w/ Zone Bypassed
+					if(d.currentZonesBypassed != "true") {
+						sendEvent(d, [name: "zonesBypassed", value: "true", displayed: "true", description: "Refresh: Alarm zones are bypassed"]) }
+					break
+				
+				//cases where zone is not bypassed
+				case "10200": //Disarmed
+				case "10201": //Armed Away
+				case "10203": //Armed Stay
+				case "10205": //Armed Away - Instant
+				case "10209": //Armed Stay - Instant
+				case "10218": //Armed Night Stay
+					if(d.currentZonesBypassed != "false") {
+                       	sendEvent(d, [name: "zonesBypassed", value: "false", displayed: "true", description: "Refresh: Alarm zones are not bypassed"]) }
+					break
+				
+				default:
+					//log.error "Alarm Status returned an irregular value " + currentStatus
+					break
+			}//switch(currentStatus) for zonesBypassed (this is way shorter than dealing with all cases in 1 switch
+			
+			sendEvent(name: "refresh", value: "true", displayed: "true", description: "Alarm Refresh Successful") 
+		} else {
+			log.error "Alarm Code does not exist"
+		}//alarm code doesn't exist
+    } catch (e) {
+    	log.error("Error Occurred Updating Alarm: " + e)
+    }// try/catch block
+} //updateAlarmStatus()
+
+def updateSwitchStatuses() {    
 	def children = getChildDevices()    
 	def zoneChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.securityDeviceId}-") }
 	def switchChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.automationDeviceId}-") }
@@ -1292,7 +1324,9 @@ def updateStatuses() {
             log.error("Error Occurred Updating Device " + it.displayName + ", Error " + e)
         }// try/catch block
     }//switchChildren.each    
+} //updateSwitchStatus()
 
+def updateZoneStatuses() {
 	zoneChildren.each { 
 		try {
 			String zoneId = it.getDeviceNetworkId().split("-")[2] //takes zoneId from deviceNetworkID in format "TC-DeviceID-ZoneID"
@@ -1347,20 +1381,20 @@ def updateStatuses() {
 					default:
 						log.error "Zone ${zoneId} returned an unexpected value.  ZoneStatus: ${currentStatus}"
 						break
-                    }//switch(currentStatus)
+                }//switch(currentStatus)
 					
-                    it.generateEvent(events)
-				}//if(state.zoneStatus.containsKey(zoneId)) 
-                else {
-					log.debug "ZoneId ${zoneId} does not exist"
-				}//else
-      		} catch (e) {
-      			log.error("Error Occurred Updating Sensor "+it.displayName+", Error " + e)
-      		}// try/catch
-        }//zoneChildren.each
-        log.debug "Finished Updating"
-        return true
-}//updateStatuses()
+                it.generateEvent(events)
+			}//if(state.zoneStatus.containsKey(zoneId)) 
+            else {
+				log.debug "ZoneId ${zoneId} does not exist"
+			}//else
+      	} catch (e) {
+      		log.error("Error Occurred Updating Sensor "+it.displayName+", Error " + e)
+      	}// try/catch
+	}//zoneChildren.each
+	log.debug "Finished Updating"
+	return true
+}//updateZoneStatuses()
 
 def tcCommand(String path, Map body, Integer retry = 0) {
 	def response
@@ -1406,6 +1440,9 @@ def tcCommand(String path, Map body, Integer retry = 0) {
                 response = tcCommand(path, body, retry)
             }//retry after 3 seconds if we haven't retried before
 		*/
+        // -4002 - The specified location is not valid
+        // 
+        
         } else {
         	//error code we haven't seen or expected, we won't do anything
             log.error "Command: ${path} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
@@ -1427,3 +1464,236 @@ def tcCommand(String path, Map body, Integer retry = 0) {
 
     return response
 }//post command to catch any issues and possibly retry command
+
+def tcCommandAsync(String path, Map body, Integer retry = 0) {
+	def params = [
+		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/",	
+		path: path,
+    	body: body,
+        contentType: application/xml
+    ]
+    
+    def handler
+    switch(path) {
+    	case "GetPanelMetaDataAndFullStatusEx":
+        	handler = "panel"
+        case "GetZonesListInStateEx":
+        	handler = "zone"
+        case "GetAllAutomationDeviceStatusEx":
+        	handler = "automation"
+        default:
+        	handler = "none"
+            break
+    }//define handler based on method called
+    
+    def data = [
+    	path: path,
+        body: body,
+        handler: handler,
+        retry: retry
+    ] //Data for Async Command.  Params to retry, handler to handle, and retry count if needed
+    
+    try {
+    	asynchttp_v1.post('asyncResponse', params, data)
+        log.debug "Sent asynchhttp_v1.post(asyncResponse, ${params}, ${data}"
+    } catch (e) {
+    	log.error "Something unexpected went wrong in tcCommandAsync: $e"
+	}//try / catch for asynchttpPost
+}//async post command
+
+/////////////////////////////////////
+// ASYNC Code & Methods
+/////////////////////////////////////
+
+def asyncResponse(response, data) {
+    if (response.hasError()) {
+        log.debug "error response data: $response.errorData"
+        try {
+            // exception thrown if xml cannot be parsed from response
+            log.debug "error response xml: $response.errorXml"
+        } catch (e) {
+            log.warn "error parsing xml: $e"
+        }
+        try {
+            // exception thrown if json cannot be parsed from response
+            log.debug "error response json: $response.errorJson"
+        } catch (e) {
+            log.warn "error parsing json: $e"
+        }
+    }
+    
+    log.debug "Response: ${response}"
+    log.debug "Response XML: ${response.xml}"
+    log.debug "Response data: ${response.data}"
+    try {
+    	//validate response
+    	resultCode = response.data.ResultCode
+        resultData = response.data.ResultData
+		
+        switch(resultCode) {
+        	case "0": //Successful Command
+            case "4500": //Successful Command for Arm Action
+				state.tokenRefresh = now() //we ran a successful command, that will keep the token alive
+				switch(data.get('handler')) {
+                    //update cases
+                    case "panel":
+                        state.alarmStatus = getAlarmStatus(response)
+                        updateAlarmStatus()
+                        break
+                    case "zone":
+                        state.zoneStatus = getZoneStatus(response)
+                        updateZoneStatuses()
+                        break
+                    case "automation":
+                        state.switchStatus = getAutomationDeviceStatus(response)
+                        updateAutomationStatuses()
+                        break
+                    //case "keepAlive":
+                    default:
+                        //if its not an update method or keepAlive we don't return anything
+                        return
+                        break
+                }//switch(data)
+                break
+            case "-102":
+	        	//this means the Session ID is invalid, needs to login and try again
+    	        log.error "Command Type: ${data} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
+        	    log.debug "Attempting to refresh token and try again"
+            	state.token = login().toString()
+            	pause(1000) //pause should allow login to complete before trying again.
+				tcCommandAsync(data.get('path'), data.get('body')) //we don't send retry as 1 since it was a login failure
+                break
+			case "4101": //We are unable to connect to the security panel. Please try again later or contact support
+            case "-4002": //The specified location is not valid
+            default: //Other Errors 
+				log.error "Command Type: ${data} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
+                /* Retry causes goofy issues...		
+                    if(retry == 0) {
+                        pause(2000) //pause 2 seconds (otherwise this hits our rate limit)
+                        retry += 1
+                        tcCommandAsync(data.get('path'), data.get('body'), retry)
+                    }//retry after 3 seconds if we haven't retried before
+                */      
+                break
+		}//switch
+	} catch (SocketTimeoutException e) {
+        //identify a timeout and retry?
+		log.error "Timeout Error: $e"
+	/* Retry causes goofy issues...		
+        if(retry == 0) {
+        	pause(2000) //pause 2 seconds (otherwise this hits our rate limit)
+           	retry += 1
+            tcCommandAsync(data.get('path'), data.get('body'), retry)
+		}//retry after 5 seconds if we haven't retried before
+	*/
+    } catch (e) {
+    	log.error "Something unexpected went wrong in asyncResponse: $e"
+	}//try / catch for httpPost
+}//asyncResponse
+
+// Gets Panel Metadata. Pulls Zone Data from same call (does not work in testing).
+def getAlarmStatus(response) {
+	String alarmCode
+
+	def data = response.data.children()
+	alarmCode = data.Partitions.PartitionInfo.ArmingState
+
+	state.alarmStatusRefresh = now()
+	return alarmCode
+} //returns alarmCode
+
+Map getZoneStatus(response) {
+    String zoneID
+    String zoneStatus
+    def zoneMap = [:]
+	try {
+        def data = response?.data
+
+        data?.ZoneStatus.Zones.ZoneStatusInfoEx.each
+        {
+            ZoneStatusInfoEx ->
+                zoneID = ZoneStatusInfoEx.'@ZoneID'
+                zoneStatus = ZoneStatusInfoEx.'@ZoneStatus'
+                //bypassable = ZoneStatusInfoEx.'@CanBeBypassed' //0 means no, 1 means yes
+                zoneMap.put(zoneID, zoneStatus)
+        }//each Zone 
+
+        //log.debug "ZoneNumber: ZoneStatus " + zoneMap
+	} catch (e) {
+      	log.error("Error Occurred Updating Zones: " + e)
+	}// try/catch block
+	
+    if(zoneMap) {
+    	state.zoneStatusRefresh = now()
+    	return zoneMap
+    } else {
+    	return state.zoneStatus
+    }//if zoneMap is empty, return current state as a failsafe and don't update zoneStatusRefresh
+} //Should return zone information
+
+// Gets Automation Device Status
+Map getAutomationDeviceStatus(response) {
+	String switchID
+	String switchState
+    String switchType
+    String switchLevel
+    Map automationMap = [:]
+
+	try {
+        response.data.AutomationData.AutomationSwitch.SwitchInfo.each
+        {
+            SwitchInfo ->
+                switchID = SwitchInfo.SwitchID
+                switchState = SwitchInfo.SwitchState
+                //switchType = SwitchInfo.SwitchType
+                //switchLevel = SwitchInfo.SwitchLevel
+                automationMap.put(switchID,switchState)
+			/* Future format to store state information	(maybe store by TC-deviceId-switchId for ease of retrevial?)
+                if(switchType == "2") {
+                	automationMap[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", switchType: "${SwitchInfo.SwitchType}", switchState: "${SwitchInfo.SwitchState}", switchLevel: "${SwitchInfo.SwitchLevel}"]
+                } else {
+                	automationMap[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", switchType: "${SwitchInfo.SwitchType}", switchState: "${SwitchInfo.SwitchState}"]
+			*/
+        }//SwitchInfo.each
+
+        //log.debug "SwitchID: SwitchState " + automationMap
+	/*		
+		response.data.AutomationData.AutomationThermostat.ThermostatInfo.each
+        {
+            ThermostatInfo ->
+                automationMap[ThermostatInfo.ThermostatID] = [
+                    thermostatId: ThermostatInfo.ThermostatID,
+                    currentOpMode: ThermostatInfo.CurrentOpMode,
+                    thermostatMode: ThermostatInfo.ThermostatMode,
+                    thermostatFanMode: ThermostatInfo.ThermostatFanMode,
+                    heatSetPoint: ThermostatInfo.HeatSetPoint,
+                    coolSetPoint: ThermostatInfo.CoolSetPoint,
+                    energySaveHeatSetPoint: ThermostatInfo.EnergySaveHeatSetPoint,
+                    energySaveCoolSetPoint: ThermostatInfo.EnergySaveCoolSetPoint,
+                    temperatureScale: ThermostatInfo.TemperatureScale,
+                    currentTemperture: ThermostatInfo.CurrentTemperture,
+                    batteryState: ThermostatInfo.BatteryState]
+        }//ThermostatInfo.each
+    */
+    
+	/*		
+		response.data.AutomationData.AutomationLock.LockInfo_Transitional.each
+        {
+            LockInfo_Transitional ->
+                automationMap[LockInfo_Transitional.LockID] = [
+                    lockID: LockInfo_Transitional.LockID,
+                    lockState: LockInfo_Transitional.LockState,
+                    batteryState: LockInfo_Transitional.BatteryState]                    ]
+        }//LockInfo_Transitional.each
+    */
+	} catch (e) {
+      	log.error("Error Occurred Updating Automation Devices: " + e)
+	}// try/catch block
+	
+    if(automationMap) {
+    	state.automationStatusRefresh = now()
+    	return automationMap
+    } else {
+    	return state.automationStatus
+    }//if automationMap is empty, return current state as a failsafe and don't update automationStatusRefresh
+} //Should return switch state information for all SwitchIDs
