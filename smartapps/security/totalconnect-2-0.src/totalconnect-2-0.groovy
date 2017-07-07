@@ -19,9 +19,10 @@
  * Version 1.1
  *  Changes [Jun 26, 2017]
  *		- Updated deviceID detection code to use deviceClassId instead of Name since that works on more panels (Vista 20P tested)
+ *		- Updated polling methods to fix Minute vs Minutes typo
  *
  * Version 2.0
- *  Changes [June 29, 2017]
+ *  Changes [July 7, 2017]
  *		- Moved polling methods to async methods (increased timeout, etc)
  *
  *  Future Changes Needed
@@ -29,7 +30,7 @@
  *      - Implement Dimmers, Thermostats, & Locks
  *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this, but could provide a device that would give a dashboard view
  *		- Armed Away from Armed Stay or vice versa does not work.  Must disarm first (does not currently handle)
- *		- Change updates from syncronous post calls to async calls (requires rewriting update mechanisms to call, and then handle when response comes)
+ *		- Finish implementing Async calls for commands (no response required)
  *
  *  Copyright 2017 Jeremy Stroebel
  *
@@ -635,11 +636,11 @@ def spawnDaemon() {
 def panelAutoUpdater() {
 	if(((now()-state.alarmStatusRefresh)/1000) > (settings.panelPollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Panel Status at ${new Date()}"
-		//tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
+		//tcCommandAsync("GetPanelMetaDataAndFullStatusEx", "SessionID=${state.token}&LocationID=${settings.locationId}&LastSequenceNumber=0&LastUpdatedTimestampTicks=0&PartitionID=1") //This updates panel status
+		tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
 
-        state.alarmStatus = alarmPanelStatus()
-        updateStatuses()
-
+        //state.alarmStatus = alarmPanelStatus()
+        //updateStatuses()
     } else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
@@ -651,11 +652,10 @@ def panelAutoUpdater() {
 def zoneAutoUpdater() {
 	if(((now()-state.zoneStatusRefresh)/1000) > (settings.zonePollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Zone Status at ${new Date()}"
-        //tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+        tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
 
-		state.zoneStatus = zoneStatus()
-        updateStatuses()
-
+		//state.zoneStatus = zoneStatus()
+        //updateStatuses()
     } else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
@@ -667,11 +667,10 @@ def zoneAutoUpdater() {
 def automationAutoUpdater() {
 	if(((now()-state.automationStatusRefresh)/1000) > (settings.automationPollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Automation Status at ${new Date()}"
-        //tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
+        tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
         
-        state.switchStatus = automationDeviceStatus()
-		updateStatuses()
-
+        //state.switchStatus = automationDeviceStatus()
+		//updateStatuses()
 	} else {
     	log.debug "Update has happened since last run, skipping this execution"
     }//if its not time to update
@@ -960,22 +959,32 @@ def pollChildren(childDevice = null) {
     	log.error "Token is likely expired.  Check Keep alive function in SmartApp"
         state.token = login().toString()
     }//check if token is likely still valid or login.  Might add a sendCommand(command) method and check before sending any commands...
-    
+   
     if(childDevice == null) {
         log.debug "pollChildren: No child device passed in, will update all devices"
         //update all devices (after checking that they exist)
         if(settings.alarmDevice) {
         	//update alarm
-            state.alarmStatus = alarmPanelStatus()
+            tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
+            //tcCommandAsync("GetPanelMetaDataAndFullStatusEx", "SessionID=${state.token}&LocationID=${settings.locationId}&LastSequenceNumber=0&LastUpdatedTimestampTicks=0&PartitionID=1") //This updates panel status
+            //state.alarmStatus = alarmPanelStatus()
+            //updateAlarmStatus()
         }
     	if(settings.zoneDevices) {
         	//update zoneDevices
-            state.zoneStatus = zoneStatus()
+			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+            //state.zoneStatus = zoneStatus()
+            //updateZoneStatuses()
         }
         if(settings.automationDevices || settings.thermostatDevices || settings.lockDevices) {
         	//update automationDevices
-            state.switchStatus = automationDeviceStatus()
+            tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
+            //state.switchStatus = automationDeviceStatus()
+            //updateSwitchStatuses()
         }//automation devices are 1 call... if any exist update all 3 types
+        
+		//updateStatuses()
+
     }//check device type and update all of that type only (scheduled polling)
     else {
     	log.debug "pollChildren: childDevice: ${childDevice} passed in"
@@ -985,22 +994,28 @@ def pollChildren(childDevice = null) {
         if(childDeviceInfo.length == 2) {
         	log.debug "Running Security Panel update only"
             //its a security panel
-            state.alarmStatus = alarmPanelStatus()
+            tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
+            //tcCommandAsync("GetPanelMetaDataAndFullStatusEx", "SessionID=${state.token}&LocationID=${settings.locationId}&LastSequenceNumber=0&LastUpdatedTimestampTicks=0&PartitionID=1") //This updates panel status
+            //state.alarmStatus = alarmPanelStatus()
+            //updateAlarmStatus()
         } else if(deviceId == settings.securityDeviceId) {
         	log.debug "Running Zone Sensor update(s) only"        	
             //its a zone sensor
-            state.zoneStatus = zoneStatus()
+			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+			//state.zoneStatus = zoneStatus()
+            //updateZoneStatuses()
         } else if(deviceId == settings.automationDeviceId) {
         	log.debug "Running Automation Device update(s) only"
         	//its an automation device (for now below works, but when thermostats and locks are added, need more definition)
-            state.switchStatus = automationDeviceStatus()
+            tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
+            //state.switchStatus = automationDeviceStatus()
+            //updateSwitchStatuses()
         }
         else {
         	log.error "deviceNetworkId is not formatted as expected.  ID: ${childDevice.getDeviceNetworkId()}"
         }
 	}//if childDevice is passed in (on demand refresh)
 	
-    updateStatuses()
     
 /* Code stolen from ecobee    
    // Check to see if it is time to do an full poll to the Ecobee servers. If so, execute the API call and update ALL children
@@ -1466,21 +1481,37 @@ def tcCommand(String path, Map body, Integer retry = 0) {
 }//post command to catch any issues and possibly retry command
 
 def tcCommandAsync(String path, Map body, Integer retry = 0) {
-	def params = [
+//def tcCommandAsync(String path, String body, Integer retry = 0) {
+	String stringBody = ""
+    
+    body.each { k, v ->
+    	if(!(stringBody == "")) {
+        	stringBody += "&" }            
+        stringBody += "${k}=${v}"
+    }//convert Map to String
+
+	//log.debug "stringBody: ${stringBody}"
+
+    def params = [
 		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/",	
 		path: path,
-    	body: body,
-        contentType: application/xml
+    	body: stringBody,
+        requestContentType: "application/x-www-form-urlencoded",
+        contentType: "application/xml"
     ]
     
     def handler
+        
     switch(path) {
     	case "GetPanelMetaDataAndFullStatusEx":
         	handler = "panel"
+            break
         case "GetZonesListInStateEx":
         	handler = "zone"
+            break
         case "GetAllAutomationDeviceStatusEx":
         	handler = "automation"
+            break
         default:
         	handler = "none"
             break
@@ -1488,14 +1519,14 @@ def tcCommandAsync(String path, Map body, Integer retry = 0) {
     
     def data = [
     	path: path,
-        body: body,
+        body: stringBody,
         handler: handler,
         retry: retry
     ] //Data for Async Command.  Params to retry, handler to handle, and retry count if needed
     
     try {
     	asynchttp_v1.post('asyncResponse', params, data)
-        log.debug "Sent asynchhttp_v1.post(asyncResponse, ${params}, ${data}"
+        //log.debug "Sent asynchhttp_v1.post(asyncResponse, ${params}, ${data})"
     } catch (e) {
     	log.error "Something unexpected went wrong in tcCommandAsync: $e"
 	}//try / catch for asynchttpPost
@@ -1521,19 +1552,20 @@ def asyncResponse(response, data) {
             log.warn "error parsing json: $e"
         }
     }
-    
-    log.debug "Response: ${response}"
-    log.debug "Response XML: ${response.xml}"
-    log.debug "Response data: ${response.data}"
+	
+    response = response.getXml()
+ 
     try {
     	//validate response
-    	resultCode = response.data.ResultCode
-        resultData = response.data.ResultData
-		
+    	def resultCode = response.ResultCode
+        def resultData = response.ResultData
+        
         switch(resultCode) {
         	case "0": //Successful Command
             case "4500": //Successful Command for Arm Action
 				state.tokenRefresh = now() //we ran a successful command, that will keep the token alive
+                
+                //log.debug "Handler: ${data.get('handler')}"
 				switch(data.get('handler')) {
                     //update cases
                     case "panel":
@@ -1546,7 +1578,7 @@ def asyncResponse(response, data) {
                         break
                     case "automation":
                         state.switchStatus = getAutomationDeviceStatus(response)
-                        updateAutomationStatuses()
+                        updateSwitchStatuses()
                         break
                     //case "keepAlive":
                     default:
@@ -1591,12 +1623,11 @@ def asyncResponse(response, data) {
 	}//try / catch for httpPost
 }//asyncResponse
 
-// Gets Panel Metadata. Pulls Zone Data from same call (does not work in testing).
+// Gets Panel Metadata.
 def getAlarmStatus(response) {
 	String alarmCode
-
-	def data = response.data.children()
-	alarmCode = data.Partitions.PartitionInfo.ArmingState
+   
+	alarmCode = response.PanelMetadataAndStatus.Partitions.PartitionInfo.ArmingState
 
 	state.alarmStatusRefresh = now()
 	return alarmCode
@@ -1607,9 +1638,7 @@ Map getZoneStatus(response) {
     String zoneStatus
     def zoneMap = [:]
 	try {
-        def data = response?.data
-
-        data?.ZoneStatus.Zones.ZoneStatusInfoEx.each
+        response?.ZoneStatus.Zones.ZoneStatusInfoEx.each
         {
             ZoneStatusInfoEx ->
                 zoneID = ZoneStatusInfoEx.'@ZoneID'
@@ -1640,7 +1669,7 @@ Map getAutomationDeviceStatus(response) {
     Map automationMap = [:]
 
 	try {
-        response.data.AutomationData.AutomationSwitch.SwitchInfo.each
+        response.AutomationData.AutomationSwitch.SwitchInfo.each
         {
             SwitchInfo ->
                 switchID = SwitchInfo.SwitchID
