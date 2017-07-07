@@ -1304,7 +1304,6 @@ def updateAlarmStatus() {
 
 def updateSwitchStatuses() {    
 	def children = getChildDevices()    
-	def zoneChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.securityDeviceId}-") }
 	def switchChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.automationDeviceId}-") }
         
 	switchChildren.each { 
@@ -1342,6 +1341,9 @@ def updateSwitchStatuses() {
 } //updateSwitchStatus()
 
 def updateZoneStatuses() {
+	def children = getChildDevices()
+    def zoneChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.securityDeviceId}-") }
+
 	zoneChildren.each { 
 		try {
 			String zoneId = it.getDeviceNetworkId().split("-")[2] //takes zoneId from deviceNetworkID in format "TC-DeviceID-ZoneID"
