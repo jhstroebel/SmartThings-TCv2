@@ -652,7 +652,7 @@ def panelAutoUpdater() {
 def zoneAutoUpdater() {
 	if(((now()-state.zoneStatusRefresh)/1000) > (settings.zonePollingInterval.toInteger()/2)) {
     	log.debug "AutoUpdate Zone Status at ${new Date()}"
-        tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+        tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 1, ListIdentifierID: 0])
 
 		//state.zoneStatus = zoneStatus()
         //updateStatuses()
@@ -972,7 +972,7 @@ def pollChildren(childDevice = null) {
         }
     	if(settings.zoneDevices) {
         	//update zoneDevices
-			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 1, ListIdentifierID: 0])
             //state.zoneStatus = zoneStatus()
             //updateZoneStatuses()
         }
@@ -1001,7 +1001,7 @@ def pollChildren(childDevice = null) {
         } else if(deviceId == settings.securityDeviceId) {
         	log.debug "Running Zone Sensor update(s) only"        	
             //its a zone sensor
-			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+			tcCommandAsync("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 1, ListIdentifierID: 0])
 			//state.zoneStatus = zoneStatus()
             //updateZoneStatuses()
         } else if(deviceId == settings.automationDeviceId) {
@@ -1070,7 +1070,7 @@ Map zoneStatus() {
     def zoneMap = [:]
 	try {
         //use Ex version to get if zone is bypassable
-        def response = tcCommand("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 0, ListIdentifierID: 0])
+        def response = tcCommand("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 1, ListIdentifierID: 0])
         def data = response?.data
 
         data?.ZoneStatus.Zones.ZoneStatusInfoEx.each
@@ -1598,7 +1598,9 @@ def asyncResponse(response, data) {
 				tcCommandAsync(data.get('path'), data.get('body')) //we don't send retry as 1 since it was a login failure
                 break
 			case "4101": //We are unable to connect to the security panel. Please try again later or contact support
+            case "4108": //Panel not connected with Virtual Keypad. Check Power/Communication failure
             case "-4002": //The specified location is not valid
+            case "-4108": //Cannot establish a connection at this time. Please contact your Security Professional if the problem persists.
             default: //Other Errors 
 				log.error "Command Type: ${data} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
                 /* Retry causes goofy issues...		
