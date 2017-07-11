@@ -15,15 +15,16 @@
  *		- Code credits for TotalConnect pieces go to mhatrey, bdwilson, QCCowboy.  Without these guys, this would have never started
  *		- Reference credit to StrykerSKS (for Ecobee SM) and infofiend (for FLEXi Lighting) where ideas and code segments came from for the SM piece
  *      - Moved from open ended polling times (in seconds) to a list.  This allows us to use better scheduling with predictable options 1 minute and over.
- *
- * Version 1.1
- *  Changes [Jun 26, 2017]
+ *  Changes [Jun 26, 2017] - v1.1
  *		- Updated deviceID detection code to use deviceClassId instead of Name since that works on more panels (Vista 20P tested)
  *		- Updated polling methods to fix Minute vs Minutes typo
  *
  * Version 2.0
  *  Changes [July 7, 2017]
  *		- Moved polling methods to async methods (increased timeout, etc)
+ *  Changes [July 10, 2017]
+ *		- Changed PartitionID to 1 from 0 for enchanced capability
+ *		- Added initialization of statusRefresh time variables to avoid errors (set to Long of 0)
  *
  *  Future Changes Needed
  *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
@@ -509,7 +510,12 @@ def initialize() {
     	log.debug "Running addDevices()"
         addDevices()
     }//addDevices if we have any
-
+	
+    //initialize last refresh variables to avoid possible Null condition
+    state.alarmStatusRefresh = 0L
+	state.zoneStatusRefresh = 0L
+	state.automationStatusRefresh = 0L
+    
     pollChildren()
 
 	if (settings.alarmDevice && settings.shmIntegration) {
