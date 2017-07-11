@@ -30,7 +30,7 @@ metadata {
     capability "Garage Door Control"
 	capability "Switch"
 	capability "Momentary"
-	capability "Contact Sensor"
+	//capability "Contact Sensor"
 	capability "Refresh"
     
     attribute "status", "string"
@@ -39,8 +39,8 @@ metadata {
 simulator {
 	// TODO: define status and reply messages here
 }
-
 tiles {
+/*
 		standardTile("toggle", "device.status", width: 3, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
 			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Opening")
@@ -48,6 +48,15 @@ tiles {
 			state("Opening", label:'${name}', icon:"st.doors.garage.garage-opening", backgroundColor:"#e86d13")
 			state("Closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
 		}
+*/
+		standardTile("toggle", "device.door", width: 3, height: 2) {
+			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
+			state("closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"opening")
+			state("open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"closing")
+			state("opening", label:'${name}', icon:"st.doors.garage.garage-opening", backgroundColor:"#e86d13")
+			state("closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
+		}
+
 		standardTile("statusopen", "device.status", inactiveLabel: false, decoration: "flat") {
 			state "default", label:'Open', action:"switch.on", icon:"st.doors.garage.garage-opening"
 		}
@@ -99,6 +108,16 @@ def generateEvent(List events) {
         isDisplayed = isChange
         
     	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
+        if(name == "status") {
+			if(device.currentState("door")?.value == value) {
+        		isChange = false
+       		} else {
+				isChange = true
+        	}//if event isn't a change to that attribute
+    		isDisplayed = isChange
+			
+            sendEvent(name: "door", value: value, displayed: isDisplayed, isStateChange: isChange)
+		}
 	}//goes through events if there are multiple
 }//generateEvent
 
@@ -137,15 +156,17 @@ def push() {
 def on() {
 	log.debug "Executing 'Open'"
 	parent.controlSwitch(device, 1)
-	sendEvent(name: "switch", value: "on", displayed: "true", description: "Opening") 
-	sendEvent(name: "status", value: "Open", displayed: "true", description: "Updating Status: Opening Garage Door") 
+	//sendEvent(name: "switch", value: "on", displayed: "true", description: "Opening") 
+	sendEvent(name: "status", value: "opening", displayed: "true", description: "Updating Status: Opening Garage Door")
+	sendEvent(name: "door", value: "opening", displayed: "true", description: "Updating Status: Opening Garage Door") 
 	runIn(15,refresh)
 }
 
 def off() {
 	log.debug "Executing 'Closed'"
 	parent.controlSwitch(device, 0)
-	sendEvent(name: "switch", value: "off", displayed: "true", description: "Closing") 
-	sendEvent(name: "status", value: "Close", displayed: "true", description: "Updating Status: Closing Garage Door") 
+	//sendEvent(name: "switch", value: "off", displayed: "true", description: "Closing") 
+	sendEvent(name: "status", value: "closing", displayed: "true", description: "Updating Status: Closing Garage Door") 
+	sendEvent(name: "door", value: "closing", displayed: "true", description: "Updating Status: Closing Garage Door") 
 	runIn(15,refresh)
 }
