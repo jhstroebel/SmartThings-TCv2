@@ -22,16 +22,21 @@
  * Version 2.0
  *  Changes [July 7, 2017]
  *		- Moved polling methods to async methods (increased timeout, etc)
- *  Changes [July 10, 2017]
+ *  Changes [July 10, 2017] - v2.0.1
  *		- Changed PartitionID to 1 from 0 for enchanced capability
  *		- Added initialization of statusRefresh time variables to avoid errors (set to Long of 0)
+ *  Changes [July 11, 2017] - v2.1
+ *		- Went to generateEvents method in automationUpdater to deal with different types of devices in handlers using unified status
+ *  Changes [July 13, 2017] - v2.2
+ *		- Changes control methods to Async methods
+ *		- Currently having issues with Synchronous HTTP methods (investigating)
+ *		- Cleaned up code from v2.0 & v2.2 changes
  *
  *  Future Changes Needed
  *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
  *      - Implement Dimmers, Thermostats, & Locks
  *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this, but could provide a device that would give a dashboard view
  *		- Armed Away from Armed Stay or vice versa does not work.  Must disarm first (does not currently handle)
- *		- Finish implementing Async calls for commands (no response required)
  *
  *  Copyright 2017 Jeremy Stroebel
  *
@@ -420,9 +425,9 @@ def login() {
     	uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
     	body: [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
     	]
-		httpPost(paramsLogin) { response ->
+	httpPost(paramsLogin) { response ->
     	token = response.data.SessionID 
-		}
+	}
 
 	state.tokenRefresh = now()
 	String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
@@ -853,7 +858,7 @@ private removeChildDevices(delete) {
 // Arm Function. Performs arming function
 def armAway(childDevice) {
     log.debug "TotalConnect2.0 SM: Executing 'armAway'"
-	def response = tcCommand("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 0, UserCode: '-1'])
+	tcCommandAsync("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 0, UserCode: '-1'])
 	//we do nothing with response (its almost useless on arm, they want you to poll another command to check for success)
 
 /* this code may not make sense... Alarm shows as armed during countdown.  Maybe push arming, then push status?  Also what happens if it doesn't arm?  this runs forever?
@@ -874,7 +879,7 @@ def armAway(childDevice) {
 
 def armAwayInstant(childDevice) {
     log.debug "TotalConnect2.0 SM: Executing 'armAwayInstant'"
-    def response = tcCommand("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 3, UserCode: '-1'])
+    tcCommandAsync("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 3, UserCode: '-1'])
 	//we do nothing with response (its almost useless on arm, they want you to poll another command to check for success)
 
 /*	
@@ -890,8 +895,7 @@ def armAwayInstant(childDevice) {
 
 def armStay(childDevice) {        
 	log.debug "TotalConnect2.0 SM: Executing 'armStay'"
-    def response = tcCommand("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 1, UserCode: '-1'])
-	//we do nothing with response (its almost useless on arm, they want you to poll another command to check for success)
+	tcCommandAsync("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 1, UserCode: '-1'])
 
 /* 	
     def metaData = panelMetaData(token, locationId) // Gets AlarmCode
@@ -906,8 +910,7 @@ def armStay(childDevice) {
 
 def armStayInstant(childDevice) {        
 	log.debug "TotalConnect2.0 SM: Executing 'armStayInstant'"
-    def response = tcCommand("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 2, UserCode: '-1'])
-	//we do nothing with response (its almost useless on arm, they want you to poll another command to check for success)
+    tcCommandAsync("ArmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, ArmType: 2, UserCode: '-1'])
 
 /* 	
     def metaData = panelMetaData(token, locationId) // Gets AlarmCode
@@ -922,8 +925,7 @@ def armStayInstant(childDevice) {
 
 def disarm(childDevice) {
 	log.debug "TotalConnect2.0 SM: Executing 'disarm'"
-    def response = tcCommand("DisarmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, UserCode: '-1'])
-	//we do nothing with response
+    tcCommandAsync("DisarmSecuritySystem", [SessionID: state.token, LocationID: settings.locationId, DeviceID: settings.securityDeviceId, UserCode: '-1'])
 
 /*   	
     def metaData = panelMetaData(token, locationId) // Gets AlarmCode
@@ -942,11 +944,9 @@ def bypassSensor(childDevice) {
 	def zoneId = childDeviceInfo[2]
     
     log.debug "TotalConnect2.0 SM: Bypassing Sensor"
-	def bypassok
 	log.debug "Bypassing Zone: ${zoneId}"
 
-	def response = tcCommand("Bypass", [SessionID: state.token, LocationID: settings.locationId, DeviceID: deviceId, Zone: zoneId, UserCode: '-1'])
-    bypassok = response.data
+	tcCommandAsync("Bypass", [SessionID: state.token, LocationID: settings.locationId, DeviceID: deviceId, Zone: zoneId, UserCode: '-1'])
 }//bypassSensor
 
 def controlSwitch(childDevice, int switchAction) {		   
@@ -954,7 +954,7 @@ def controlSwitch(childDevice, int switchAction) {
     def deviceId = childDeviceInfo[1]
 	def switchId = childDeviceInfo[2]
 
-	def response = tcCommand("ControlASwitch", [SessionID: state.token, DeviceID: deviceId, SwitchID: switchId, SwitchAction: switchAction])
+	tcCommandAsync("ControlASwitch", [SessionID: state.token, DeviceID: deviceId, SwitchID: switchId, SwitchAction: switchAction])
 }//controlSwitch
 
 def pollChildren(childDevice = null) {
@@ -972,7 +972,6 @@ def pollChildren(childDevice = null) {
         if(settings.alarmDevice) {
         	//update alarm
             tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
-            //tcCommandAsync("GetPanelMetaDataAndFullStatusEx", "SessionID=${state.token}&LocationID=${settings.locationId}&LastSequenceNumber=0&LastUpdatedTimestampTicks=0&PartitionID=1") //This updates panel status
             //state.alarmStatus = alarmPanelStatus()
             //updateAlarmStatus()
         }
@@ -1001,7 +1000,6 @@ def pollChildren(childDevice = null) {
         	log.debug "Running Security Panel update only"
             //its a security panel
             tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1]) //This updates panel status
-            //tcCommandAsync("GetPanelMetaDataAndFullStatusEx", "SessionID=${state.token}&LocationID=${settings.locationId}&LastSequenceNumber=0&LastUpdatedTimestampTicks=0&PartitionID=1") //This updates panel status
             //state.alarmStatus = alarmPanelStatus()
             //updateAlarmStatus()
         } else if(deviceId == settings.securityDeviceId) {
@@ -1038,148 +1036,6 @@ def pollChildren(childDevice = null) {
     }
 */// pollChildren from Ecobee Connect Code
 }//pollChildren
-
-// Gets Panel Metadata. Pulls Zone Data from same call (does not work in testing).  Takes token & location ID as an argument.
-def alarmPanelStatus() {
-	String alarmCode
-
-/* Variables for zone information (doesn't accurately report status)
-	String zoneID
-    String zoneStatus
-    def zoneMap = [:]
-*/
-	def response = tcCommand("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1])
-	def data = response.data.children()
-	alarmCode = data.Partitions.PartitionInfo.ArmingState
-
-/* Parse zone information into map (doesn't accurately report status)
-	zoneMap.put("0", alarmCode) //Put alarm code in as zone 0
-
-	data.Zones.ZoneInfo.each
-	{
-		ZoneInfo ->
-			zoneID = ZoneInfo.'@ZoneID'
-			zoneStatus = ZoneInfo.'@ZoneStatus'
-			zoneMap.put(zoneID, zoneStatus)
-	}
-
-	log.debug "ZoneNumber: ZoneStatus " + zoneMap
-    return zoneMap
-*/
-	state.alarmStatusRefresh = now()
-	return alarmCode
-} //returns alarmCode
-
-Map zoneStatus() {
-    String zoneID
-    String zoneStatus
-    def zoneMap = [:]
-	try {
-        //use Ex version to get if zone is bypassable
-        def response = tcCommand("GetZonesListInStateEx", [SessionID: state.token, LocationID: settings.locationId, PartitionID: 1, ListIdentifierID: 0])
-        def data = response?.data
-
-        data?.ZoneStatus.Zones.ZoneStatusInfoEx.each
-        {
-            ZoneStatusInfoEx ->
-                zoneID = ZoneStatusInfoEx.'@ZoneID'
-                zoneStatus = ZoneStatusInfoEx.'@ZoneStatus'
-                //bypassable = ZoneStatusInfoEx.'@CanBeBypassed' //0 means no, 1 means yes
-                zoneMap.put(zoneID, zoneStatus)
-        }//each Zone 
-
-        //log.debug "ZoneNumber: ZoneStatus " + zoneMap
-	} catch (e) {
-      	log.error("Error Occurred Updating Zones: " + e)
-	}// try/catch block
-	
-    if(zoneMap) {
-    	state.zoneStatusRefresh = now()
-    	return zoneMap
-    } else {
-    	return state.zoneStatus
-    }//if zoneMap is empty, return current state as a failsafe and don't update zoneStatusRefresh
-} //Should return zone information
-
-// Gets Automation Device Status
-Map automationDeviceStatus() {
-	String switchID
-	String switchState
-    String switchType
-    String switchLevel
-    Map automationMap = [:]
-
-	try {
-        def response = tcCommand("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
-        response.data.AutomationData.AutomationSwitch.SwitchInfo.each
-        {
-            SwitchInfo ->
-                switchID = SwitchInfo.SwitchID
-                switchState = SwitchInfo.SwitchState
-                //switchType = SwitchInfo.SwitchType
-                //switchLevel = SwitchInfo.SwitchLevel
-                automationMap.put(switchID,switchState)
-			/* Future format to store state information	(maybe store by TC-deviceId-switchId for ease of retrevial?)
-                if(switchType == "2") {
-                	automationMap[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", switchType: "${SwitchInfo.SwitchType}", switchState: "${SwitchInfo.SwitchState}", switchLevel: "${SwitchInfo.SwitchLevel}"]
-                } else {
-                	automationMap[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", switchType: "${SwitchInfo.SwitchType}", switchState: "${SwitchInfo.SwitchState}"]
-			*/
-        }//SwitchInfo.each
-
-        //log.debug "SwitchID: SwitchState " + automationMap
-	/*		
-		response.data.AutomationData.AutomationThermostat.ThermostatInfo.each
-        {
-            ThermostatInfo ->
-                automationMap[ThermostatInfo.ThermostatID] = [
-                    thermostatId: ThermostatInfo.ThermostatID,
-                    currentOpMode: ThermostatInfo.CurrentOpMode,
-                    thermostatMode: ThermostatInfo.ThermostatMode,
-                    thermostatFanMode: ThermostatInfo.ThermostatFanMode,
-                    heatSetPoint: ThermostatInfo.HeatSetPoint,
-                    coolSetPoint: ThermostatInfo.CoolSetPoint,
-                    energySaveHeatSetPoint: ThermostatInfo.EnergySaveHeatSetPoint,
-                    energySaveCoolSetPoint: ThermostatInfo.EnergySaveCoolSetPoint,
-                    temperatureScale: ThermostatInfo.TemperatureScale,
-                    currentTemperture: ThermostatInfo.CurrentTemperture,
-                    batteryState: ThermostatInfo.BatteryState]
-        }//ThermostatInfo.each
-    */
-    
-	/*		
-		response.data.AutomationData.AutomationLock.LockInfo_Transitional.each
-        {
-            LockInfo_Transitional ->
-                automationMap[LockInfo_Transitional.LockID] = [
-                    lockID: LockInfo_Transitional.LockID,
-                    lockState: LockInfo_Transitional.LockState,
-                    batteryState: LockInfo_Transitional.BatteryState]                    ]
-        }//LockInfo_Transitional.each
-    */
-	} catch (e) {
-      	log.error("Error Occurred Updating Automation Devices: " + e)
-	}// try/catch block
-	
-    if(automationMap) {
-    	state.automationStatusRefresh = now()
-    	return automationMap
-    } else {
-    	return state.automationStatus
-    }//if automationMap is empty, return current state as a failsafe and don't update automationStatusRefresh
-} //Should return switch state information for all SwitchIDs
-
-def updateStatuses() {
-	if(settings.alarmDevice) { 
-       	updateAlarmStatus()
-	}//if(settings.alarmDevice)
-
-	updateSwitchStatuses()
-	updateZoneStatuses()
-
-	log.debug "Finished Updating"
-	return true
-}//legacy method used to update statuses, delete after transitioning to new method
 
 def updateAlarmStatus() {
     try {
@@ -1316,26 +1172,35 @@ def updateSwitchStatuses() {
 		try {
 			//log.debug "(Switch) SmartThings State is: " + it.currentStatus
 			String switchId = it.getDeviceNetworkId().split("-")[2] //takes switchId from deviceNetworkID in format "TC-DeviceID-SwitchID"
-                                
+            
 			if(state.switchStatus.containsKey(switchId)) {
+            	def events = []
 				def switchState = state.switchStatus.get(switchId)
 				//log.debug "(Switch) Polled State is: ${switchState}"
                     
                 switch(switchState) {
                     case "0":
                         //log.debug "Status is: Closed"
-                        if(it.currentStatus != "Closed") {
-                            sendEvent(it, [name: "status", value: "Closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true"]) }
+                        if(it.currentStatus != "closed") {
+                            events << [name: "status", value: "closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true"]
+                            events << [name: "switch", value: "off", displayed: "false", description: "Refresh: Garage Door is Closed", isStateChange: "true"]
+                            //sendEvent(it, [name: "status", value: "closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true"])
+                        }
                         break
                     case "1":
                         //log.debug "Status is: Open"
-                        if(it.currentStatus != "Open") {
-                            sendEvent(it, [name: "status", value: "Open", displayed: "true", description: "Refresh: Garage Door is Open", isStateChange: "true"]) }
+                        if(it.currentStatus != "open") {
+                        	events << [name: "status", value: "closed", displayed: "true", description: "Refresh: Garage Door is Closed", isStateChange: "true"]
+							events << [name: "switch", value: "on", displayed: "false", description: "Refresh: Garage Door is Closed", isStateChange: "true"]
+                            //sendEvent(it, [name: "status", value: "open", displayed: "true", description: "Refresh: Garage Door is Open", isStateChange: "true"])
+                        }
                         break
                     default:
                         log.error "Attempted to update switchState to ${switchState}. Only valid states are 0 or 1."
                         break
                 }//switch(switchState)
+                
+                it.generateEvent(events)
             }//if(state.switchState.containsKey(switchId)
             else {
                 log.error "SwitchId ${switchId} does not exist"
@@ -1489,7 +1354,6 @@ def tcCommand(String path, Map body, Integer retry = 0) {
 }//post command to catch any issues and possibly retry command
 
 def tcCommandAsync(String path, Map body, Integer retry = 0) {
-//def tcCommandAsync(String path, String body, Integer retry = 0) {
 	String stringBody = ""
     
     body.each { k, v ->
