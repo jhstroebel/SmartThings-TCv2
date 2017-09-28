@@ -1,7 +1,7 @@
 /**
- *	TotalConnect Garage Door API
+ *	TotalConnect Lock API
  *
- *	Code is slightly modified for a Garage Door Automation Device, but almost no code is original
+ *	Code is slightly modified for a Lock Automation Device, but almost no code is original
  *	Copyright 2015 Brian Wilson 
  *
  *	Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -26,10 +26,11 @@ preferences {
 	//Preferences Go Here
 }
 metadata {
-	definition (name: "TotalConnect Garage Door", namespace: "jhstroebel", author: "Jeremy Stroebel") {
-    capability "Garage Door Control"
+	definition (name: "TotalConnect Lock", namespace: "jhstroebel", author: "Jeremy Stroebel") {
+	capability "Lock"
+    capability "Actuator"
 	capability "Switch"
-	capability "Momentary"
+	//capability "Momentary"
 	capability "Refresh"
     
     attribute "status", "string"
@@ -42,32 +43,32 @@ tiles {
 /*
 		standardTile("toggle", "device.status", width: 3, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
-			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Opening")
-			state("Open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"Closing")
+			state("Closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"Unlocking")
+			state("Open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"Locking")
 			state("Opening", label:'${name}', icon:"st.doors.garage.garage-opening", backgroundColor:"#e86d13")
 			state("Closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
 		}
 */
 		standardTile("toggle", "device.door", width: 3, height: 2) {
-			state("unknown", label:'${name}', action:"device.refresh", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13")
-			state("closed", label:'${name}', action:"switch.on", icon:"st.doors.garage.garage-closed", backgroundColor:"#00a0dc", nextState:"opening")
-			state("open", label:'${name}', action:"switch.off", icon:"st.doors.garage.garage-open", backgroundColor:"#e86d13", nextState:"closing")
-			state("opening", label:'${name}', icon:"st.doors.garage.garage-opening", backgroundColor:"#e86d13")
-			state("closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
+			state("unknown", label:'${name}', action:"device.refresh", icon:"st.locks.lock.unknown", backgroundColor:"#e86d13")
+			state("locked", label:'${name}', action:"switch.on", icon:"st.locks.lock.locked", backgroundColor:"#00a0dc", nextState:"unlocking")
+			state("unlocked", label:'${name}', action:"switch.off", icon:"st.locks.lock.unlocked", backgroundColor:"#e86d13", nextState:"locking")
+			state("unlocking", label:'${name}', icon:"st.locks.lock.unlocked", backgroundColor:"#e86d13")
+			state("locking", label:'${name}', icon:"st.locks.lock.locked", backgroundColor:"#00a0dc")
 		}
 
-		standardTile("statusopen", "device.status", inactiveLabel: false, decoration: "flat") {
-			state "default", label:'Open', action:"switch.on", icon:"st.doors.garage.garage-opening"
+		standardTile("statusunlocked", "device.status", inactiveLabel: false, decoration: "flat") {
+			state "default", label:'Open', action:"switch.on", icon:"st.locks.lock.unlocked"
 		}
-		standardTile("statusclosed", "device.status", inactiveLabel: false, decoration: "flat") {
-			state "default", label:'Close', action:"switch.off", icon:"st.doors.garage.garage-closing"
+		standardTile("statuslocked", "device.status", inactiveLabel: false, decoration: "flat") {
+			state "default", label:'Close', action:"switch.off", icon:"st.locks.lock.locked"
 		}
 		standardTile("refresh", "device.status", inactiveLabel: false, decoration: "flat") {
 			state "default", label:'', action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
 
 		main "toggle"
-		details(["toggle", "statusclosed", "statusopen", "refresh"])
+		details(["toggle", "statuslocked", "statusunlocked", "refresh"])
 	}
 }
 
@@ -129,6 +130,15 @@ def close() {
 	off()
 }
 
+def unlock() {
+	on()
+}
+
+def lock() {
+	off()
+}
+
+/*
 def push() {    
     def latest = device.latestValue("door");
 	log.debug "Garage door push button, current state $latest"
@@ -151,21 +161,24 @@ def push() {
             break
     }
 }
+*/
+
+//Should On be Lock and Off be Unlock???
 
 def on() {
-	log.debug "Executing 'Open'"
-	parent.controlSwitch(device, 1)
-	//sendEvent(name: "switch", value: "on", displayed: "true", description: "Opening") 
-	sendEvent(name: "status", value: "opening", displayed: "true", description: "Updating Status: Opening Garage Door")
-	sendEvent(name: "door", value: "opening", displayed: "true", description: "Updating Status: Opening Garage Door") 
+	log.debug "Executing 'Unlock'"
+	parent.controlLock(device, 0)
+	//sendEvent(name: "switch", value: "on", displayed: "true", description: "Unlocking") 
+	sendEvent(name: "status", value: "unlocking", displayed: "true", description: "Updating Status: Unlocking ${name}")
+	sendEvent(name: "door", value: "unlocking", displayed: "true", description: "Updating Status: Unlocking ${name}") 
 	runIn(15,refresh)
 }
 
 def off() {
-	log.debug "Executing 'Closed'"
-	parent.controlSwitch(device, 0)
-	//sendEvent(name: "switch", value: "off", displayed: "true", description: "Closing") 
-	sendEvent(name: "status", value: "closing", displayed: "true", description: "Updating Status: Closing Garage Door") 
-	sendEvent(name: "door", value: "closing", displayed: "true", description: "Updating Status: Closing Garage Door") 
+	log.debug "Executing 'Lock'"
+	parent.controlLock(device, 1)
+	//sendEvent(name: "switch", value: "off", displayed: "true", description: "Locking") 
+	sendEvent(name: "status", value: "locking", displayed: "true", description: "Updating Status: Locking ${name}") 
+	sendEvent(name: "door", value: "locking", displayed: "true", description: "Updating Status: Locking ${name}") 
 	runIn(15,refresh)
 }

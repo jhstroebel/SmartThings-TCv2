@@ -35,7 +35,7 @@ metadata {
 // UI tile definitions
 	tiles {
 		standardTile("contact", "device.contact", width: 3, height: 2) {
-			state "open", label: "Faulted", icon: "st.contact.contact.open", backgroundColor: "#FF0000"
+			state "open", label: "Motion", icon: "st.contact.contact.open", backgroundColor: "#FF0000"
 			state "closed", label: 'OK', icon: "st.contact.contact.closed", backgroundColor: "#79b821"
 			state "bypassed", label: 'Bypassed', icon: "st.contact.contact.open", backgroundColor: "#2179b8"
 			state "trouble", label: 'Troubled', icon: "st.contact.contact.open", backgroundColor: "#e5e500"
@@ -82,7 +82,7 @@ def generateEvent(List events) {
         }//if event isn't a change to that attribute
         
         isDisplayed = isChange
-        
+                
     	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
 	}//goes through events if there are multiple
 }//generateEvent
