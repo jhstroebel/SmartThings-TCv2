@@ -27,6 +27,7 @@ preferences {
 }
 metadata {
 	definition (name: "TotalConnect Garage Door", namespace: "jhstroebel", author: "Jeremy Stroebel") {
+    capability "Door Control"
     capability "Garage Door Control"
 	capability "Switch"
 	capability "Momentary"

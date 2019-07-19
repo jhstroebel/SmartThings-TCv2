@@ -49,7 +49,7 @@ tiles {
 			state("Closing", label:'${name}', icon:"st.doors.garage.garage-closing", backgroundColor:"#00a0dc")
 		}
 */
-		standardTile("toggle", "device.door", width: 3, height: 2) {
+		standardTile("toggle", "device.lock", width: 3, height: 2) {
 			state("unknown", label:'${name}', action:"device.refresh", icon:"st.locks.lock.unknown", backgroundColor:"#e86d13")
 			state("locked", label:'${name}', action:"switch.on", icon:"st.locks.lock.locked", backgroundColor:"#00a0dc", nextState:"unlocking")
 			state("unlocked", label:'${name}', action:"switch.off", icon:"st.locks.lock.unlocked", backgroundColor:"#e86d13", nextState:"locking")
@@ -58,10 +58,10 @@ tiles {
 		}
 
 		standardTile("statusunlocked", "device.status", inactiveLabel: false, decoration: "flat") {
-			state "default", label:'Open', action:"switch.on", icon:"st.locks.lock.unlocked"
+			state "default", label:'Unlock', action:"switch.on", icon:"st.locks.lock.unlocked"
 		}
 		standardTile("statuslocked", "device.status", inactiveLabel: false, decoration: "flat") {
-			state "default", label:'Close', action:"switch.off", icon:"st.locks.lock.locked"
+			state "default", label:'Lock', action:"switch.off", icon:"st.locks.lock.locked"
 		}
 		standardTile("refresh", "device.status", inactiveLabel: false, decoration: "flat") {
 			state "default", label:'', action:"refresh.refresh", icon:"st.secondary.refresh"
@@ -109,14 +109,14 @@ def generateEvent(List events) {
         
     	sendEvent(name: name, value: value, displayed: isDisplayed, isStateChange: isChange)
         if(name == "status") {
-			if(device.currentState("door")?.value == value) {
+			if(device.currentState("lock")?.value == value) {
         		isChange = false
        		} else {
 				isChange = true
         	}//if event isn't a change to that attribute
     		isDisplayed = isChange
 			
-            sendEvent(name: "door", value: value, displayed: isDisplayed, isStateChange: isChange)
+            sendEvent(name: "lock", value: value, displayed: isDisplayed, isStateChange: isChange)
 		}
 	}//goes through events if there are multiple
 }//generateEvent
