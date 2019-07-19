@@ -1,5 +1,5 @@
 /**
- *  TotalConnect
+ *  TotalConnect Async
  *
  *  Version: v0.1
  *   Changes [June 6th, 2017]
@@ -33,9 +33,12 @@
  *		- Cleaned up code from v2.0 & v2.2 changes
  *  Changes [July 13, 2017] - v2.2.1
  *		- Added in Arming and Disarming statuses with an automatic refresh 3 seconds later
+ *  Changes [July 25, 2017] - v2.3
+ *		- Completely rewrite of settings to make async to work around issues with synchronous calls coming back as connection reset (still unknown why)
  *
  *  Future Changes Needed
- *      - Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
+ *      - Need to be able to run through settings and make changes (currently it won't actually get new data)
+ *		- Add a settings to change credentials in preferences (currently can't get back into credentials page after initial setup unless credentials are failing login)
  *      - Implement Dimmers, Thermostats, & Locks
  *      - Any logic to run like harmony with hubs (automationDevice vs securityDevice) and subdevices?  seems unnecessarily complicated for this, but could provide a device that would give a dashboard view
  *		- Armed Away from Armed Stay or vice versa does not work.  Must disarm first (does not currently handle)
@@ -56,7 +59,7 @@
 include 'asynchttp_v1'
 
 definition(
-    name: "TotalConnect 2.0",
+    name: "TotalConnect 2.0 (Async)",
     namespace: "Security",
     author: "Jeremy Stroebel",
     description: "Total Connect 2.0 Service Manager",
@@ -65,9 +68,9 @@ definition(
     iconX2Url: "https://s3.amazonaws.com/yogi/TotalConnect/300.png",
     singleInstance: true)
 
-preferences {
+preferences {    	
 	page(name: "credentials", content: "authPage")
-	//dynamic page that has duplicate code with deviceSetup (should be a way to remove, maybe with content: and methods?)
+	page(name: "locationsPage", content: "locationsPage")
     page(name: "deviceSetup", content: "deviceSetup")
 	//only runs on first install
     page(name: "sensorSetup", content: "sensorSetup")
@@ -79,78 +82,94 @@ preferences {
 /////////////////////////////////////
 
 def authPage() {
-	if (!isTokenValid() && settings.userName != null && settings.password != null) {
+	//Reset Settings
+    //state.token = null
+    //state.locationMap = null
+    //state.sensors = null
+    //state.switches = null
+    //state.thermostats = null
+    //state.locks = null
+    
+    state.setup = true
+    
+    if (!isTokenValid() && settings.userName != null && settings.password != null) {
 		log.debug "Login Token Does not Exist or is likely invalid - Will attempt Login"
-       	state.token = login()
+       	login()
     }//Check if there is no login token, but there are login details (this will check to make sure we're logged in before any refresh as well)
     
-    if (!isTokenValid())
-    {
-       	log.debug "Either Login failed or there are no credentials to attempt login yet"
-        state.firstRun == true //this essentially reset credentials if login fails, but backend values will stay set (unknown how to resolve that, can't clear settings)
-    }//only show credentials if login failed or there are no credentials yet (need a reset credentials option)
+	//login page
+    dynamicPage(name: "credentials", title:"TotalConnect 2.0 Login", nextPage: "locationsPage", uninstall: true, install:false) {
+    	section ("TotalConnect 2.0 Login Credentials") {
+       		paragraph "Give your Total Connect credentials. Recommended to make another user for SmartThings"
+    		input("userName", "text", title: "Username", description: "Your username for TotalConnect")
+    		input("password", "password", title: "Password", description: "Your Password for TotalConnect", submitOnChange:true)
+		}//section
+            			
+        //Backend Values (at bottom)
+    	section("Backend TotalConnect 2.0 Values - DO NOT CHANGE", hideable: true, hidden: true) {
+			paragraph "These are required for login:"
+           	input "applicationId", "text", title: "Application ID - It is '14588' currently", description: "Application ID", defaultValue: "14588"
+			input "applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32"
+		}//section
+    }//dynamicPage()
+}//authPage()
+
+def locationsPage() {
+//    state.setup = true
+    if(!isTokenValid()) {
+      	login()
+    }//only login if we haven't
 	
-	if(state.firstRun == null || state.firstRun != false) {
-    	//Login Credentials
-		dynamicPage(name:"credentials", title:"TotalConnect 2.0 Login", nextPage: "deviceSetup", uninstall: true, install:false) {
-        	section ("TotalConnect 2.0 Login Credentials") {
-        		paragraph "Give your Total Connect credentials. Recommended to make another user for SmartThings"
-    			input("userName", "text", title: "Username", description: "Your username for TotalConnect")
-    			input("password", "password", title: "Password", description: "Your Password for TotalConnect", submitOnChange:true)
-			}//section
-		
-        	//Location Selection
-        	def hideLocation = false //default to showing location
-			def locations
-    		def defaultLocation
-    		def deviceMap
-			def options = []
-            
-            if(settings.userName != null && settings.password != null) {
-	            if(settings.selectedLocation == null) {
-	            }//if no location is set, expand this section
+    dynamicPage(name:"locationsPage", title:"Locations", nextPage: "deviceSetup", uninstall: true, install:false, refreshInterval: 5) {
+		if(!isTokenValid()) {
+			section {
+	           	paragraph "Please wait while we log you in.  This page will refresh in 5 seconds"
+                //hopefully will never show, we login after we have details on prior page
+            }//section
+		} else if(isTokenValid() && !state.locationMap) {
+			findLocations()
+        
+        	section {
+	       		paragraph "You have been successfully logged in.  Please wait while we get Locations.  This page will refresh in 5 seconds"
+        	}//section
+		} else {
+	    	//def deviceMap = getDeviceIDs(locations.get(selectedLocation))
+            def options = state.locationMap.keySet() as List ?: []
 
-	   			locations = locationFound()
-
-    			deviceMap = getDeviceIDs(locations.get(selectedLocation))
-				options = locations.keySet() as List ?: []
-   				log.debug "Options: " + options
-
-			} else {
-	    		hideLocation = true
-            }//hide location when there is no username or password
-            
-        	section("Select from the following Locations for Total Connect.", hideable: true, hidden: hideLocation) {
-				input "selectedLocation", "enum", required:true, title:"Select the Location", multiple:false, submitOnChange:true, options:options
-       		}//section
-            
+            section("Select from the following Locations for Total Connect.") {
+            	input "selectedLocation", "enum", required:true, title:"Select the Location", multiple:false, submitOnChange:true, options:options
+            }//section
+            if(settings.selectedLocation) {
             //Backend Values (at bottom)
        		section("Backend TotalConnect 2.0 Values - DO NOT CHANGE", hideable: true, hidden: true) {
-				paragraph "These are required for login:"
-            	input "applicationId", "text", title: "Application ID - It is '14588' currently", description: "Application ID", defaultValue: "14588"
-				input "applicationVersion", "text", title: "Application Version - use '3.0.32'", description: "Application Version", defaultValue: "3.0.32"
 				paragraph "These are required for device control:"
-            	input "locationId", "text", title: "Location ID - Do not change", description: "Location ID", defaultValue: locations?.get(selectedLocation) ?: ""
-				input "securityDeviceId", "text", title: "Security Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("1") //deviceMap?.get("Security Panel")
-       	    	input "automationDeviceId", "text", required:false, title: "Automation Device ID - Do not change", description: "Device ID", defaultValue: deviceMap?.get("3") //deviceMap?.get("Automation")
-			}//section
-
-		}//dynamicPage, Only show this page if missing authentication
-	} else {
-		deviceSetup()
-	}//if this isn't the first run, go straight to device setup
-}
+           		input "locationId", "text", title: "Location ID - Do not change", description: "Location ID", defaultValue: state.locationMap?.get(selectedLocation) ?: ""
+				input "securityDeviceId", "text", title: "Security Device ID - Do not change", description: "Device ID", defaultValue: state.deviceMap?.get(state.locationMap?.get(selectedLocation)).get("1") //deviceMap?.get("Security Panel")
+       			input "automationDeviceId", "text", required:false, title: "Automation Device ID - Do not change", description: "Device ID", defaultValue: state.deviceMap?.get(state.locationMap?.get(selectedLocation)).get("3") //deviceMap?.get("Automation")
+            }//section
+            }
+        }//if we are logged in
+	}//dynamicPage
+}//locations page
 
 private deviceSetup() {
-	def nextPage = null //default to no, assuming no sensors
+	if(!state.sensors) {
+      	findSensorDevices()
+    } //this assumes all panels with an alarm have sensors (we also assume all panels have an alarm)
+       
+	if(settings.automationDeviceId && !(state.switches || state.thermostats || state.locks)) {
+		findAutomationDevices()
+    }//if we don't have automation devices, go get them
+    
+    def nextPage = null //default to no, assuming no sensors
     def install = true //default to true to allow install with no sensors
 	if(zoneDevices) {
       	nextPage = "sensorSetup"
 		install = false
 	}//if we have sensors, make us go to sensorSetup
         
-	return dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true) {
-		if(zoneDevices) {
+	return dynamicPage(name:"deviceSetup", title:"Pulling up the TotalConnect Device List!",nextPage: nextPage, install: install, uninstall: true, refreshInterval: 5) {
+        if(zoneDevices) {
 			nextPage = "sensorSetup"
 			install = false
 		} else {
@@ -158,61 +177,61 @@ private deviceSetup() {
 			install = true
 		} //only set nextPage if sensors are selected (and disable install)
 		
-        def zoneMap
-        def automationMap
-		def thermostatMap
-        def lockMap
-        
-		discoverSensors() //have to find zone sensors first
-		zoneMap = sensorsDiscovered()
+        if(!state.sensors || (settings.automationDeviceId && !(state.switches || state.thermostats || state.locks))) {
+            section {
+	           	paragraph "Please wait while we get devices from TotalConnect.  This page will refresh in 5 seconds"
+            }//section
+        } else {
+            def zoneMap
+            def automationMap
+            def thermostatMap
+            def lockMap
 
-		if(settings.automationDeviceId) {
-			log.debug "Automation Discovery Happened"
-			discoverSwitches() //have to find switches first
-			automationMap = switchesDiscovered()
+            zoneMap = sensorsDiscovered()
 
-			discoverThermostats() //have to find thermostats first
-			thermostatMap = thermostatsDiscovered()
+            if(settings.automationDeviceId) {
+                automationMap = switchesDiscovered()
+                thermostatMap = thermostatsDiscovered()
+                lockMap = locksDiscovered()
+            }//only discover Automation Devices if there is an automation device with the given location
 
-			discoverLocks() //have to find locks first
-			lockMap = locksDiscovered()
-		}//only discover Automation Devices if there is an automation device with the given location
-        
-        def hideAlarmOptions = true
-        if(alarmDevice) {
-        	hideAlarmOptions = false
-        }//If alarm is selected, expand options
-        
-		def hidePollingOptions = true
-        if(pollOn) {
-        	hidePollingOptions = false
-        }//If alarm is selected, expand options
-        
-        Map pollingOptions = [5: "5 seconds", 10: "10 seconds", 15: "15 seconds", 20: "20 seconds", 30: "30 seconds", 60: "1 minute", 300: "5 minutes", 600: "10 minutes"]
-        
-    	section("Select from the following Security devices to add in SmartThings.") {
-			input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false, submitOnChange:true
-            input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, options:zoneMap, submitOnChange:true
-        }//section    
-        section("Alarm Integration Options:", hideable: true, hidden: hideAlarmOptions) {
-        	input "shmIntegration", "bool", required: true, title:"Sync alarm status and SHM status", default:false
-        }//section
-        section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
-            input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true, submitOnChange:true
-            input "thermostatDevices", "enum", required:false, title:"Select any Thermostat Devices", multiple:true, options:thermostatMap, hideWhenEmpty:true, submitOnChange:true
-            input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockMap, hideWhenEmpty:true, submitOnChange:true
-        }//section
-		section("Enable Polling?") {
-        	input "pollOn", "bool", title: "Polling On?", description: "Pause or Resume Polling", submitOnChange:true
-		}
-        section("Polling Options (advise not to set any under 10 secs):", hideable: true, hidden: hidePollingOptions) {
-			//input "panelPollingInterval", "number", required:pollOn, title: "Alarm Panel Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
-			input "panelPollingInterval", "enum", required:(pollOn && settings.alarmDevice), title: "Alarm Panel Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
-            //input "zonePollingInterval", "number", required:pollOn, title: "Zone Sensor Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
-            input "zonePollingInterval", "enum", required:(pollOn && settings.zoneDevices), title: "Zone Sensor Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
-        	//input "automationPollingInterval", "number", required:pollOn, title: "Automation Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
-        	input "automationPollingInterval", "enum", required:(pollOn && (settings.automationDevices || settings.thermostatDevices || settings.lockDevices)), title: "Automation Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
-        }//section
+            def hideAlarmOptions = true
+            if(alarmDevice) {
+                hideAlarmOptions = false
+            }//If alarm is selected, expand options
+
+            def hidePollingOptions = true
+            if(pollOn) {
+                hidePollingOptions = false
+            }//If alarm is selected, expand options
+
+            Map pollingOptions = [5: "5 seconds", 10: "10 seconds", 15: "15 seconds", 20: "20 seconds", 30: "30 seconds", 60: "1 minute", 300: "5 minutes", 600: "10 minutes"]
+
+            section("Select from the following Security devices to add in SmartThings.") {
+                input "alarmDevice", "bool", required:true, title:"Honeywell Alarm", defaultValue:false, submitOnChange:true
+                input "zoneDevices", "enum", required:false, title:"Select any Zone Sensors", multiple:true, options:zoneMap, submitOnChange:true
+            }//section    
+            section("Alarm Integration Options:", hideable: true, hidden: hideAlarmOptions) {
+                input "shmIntegration", "bool", required: true, title:"Sync alarm status and SHM status", default:false
+            }//section
+            section("Select from the following Automation devices to add in SmartThings. (Suggest adding devices directly to SmartThings if compatible)") {
+                input "automationDevices", "enum", required:false, title:"Select any Automation Devices", multiple:true, options:automationMap, hideWhenEmpty:true, submitOnChange:true
+                input "thermostatDevices", "enum", required:false, title:"Select any Thermostat Devices", multiple:true, options:thermostatMap, hideWhenEmpty:true, submitOnChange:true
+                input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockMap, hideWhenEmpty:true, submitOnChange:true
+                //input "lockDevices", "enum", required:false, title:"Select any Lock Devices", multiple:true, options:lockDevices, hideWhenEmpty:true, submitOnChange:true
+            }//section
+            section("Enable Polling?") {
+                input "pollOn", "bool", title: "Polling On?", description: "Pause or Resume Polling", submitOnChange:true
+            }
+            section("Polling Options (advise not to set any under 10 secs):", hideable: true, hidden: hidePollingOptions) {
+                //input "panelPollingInterval", "number", required:pollOn, title: "Alarm Panel Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
+                input "panelPollingInterval", "enum", required:(pollOn && settings.alarmDevice), title: "Alarm Panel Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
+                //input "zonePollingInterval", "number", required:pollOn, title: "Zone Sensor Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
+                input "zonePollingInterval", "enum", required:(pollOn && settings.zoneDevices), title: "Zone Sensor Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
+                //input "automationPollingInterval", "number", required:pollOn, title: "Automation Polling Interval (in secs)", description: "How often the SmartApp will poll TC2.0"
+                input "automationPollingInterval", "enum", required:(pollOn && (settings.automationDevices || settings.thermostatDevices || settings.lockDevices)), title: "Automation Polling Interval", description: "How often the SmartApp will poll TC2.0", options:pollingOptions, default:60
+            }//section
+    	}//we have the data needed to generate this page
 	}//dynamicpage
 }//deviceSetup
 
@@ -232,75 +251,23 @@ private sensorSetup() {
 // Setup/Device Discovery Functions
 /////////////////////////////////////
 
-Map locationFound() {
-    log.debug "Executed location function during Setup"
-
-    def locationId
-    def locationName
-    def locationMap = [:]
-
-	def response = tcCommand("GetSessionDetails", [SessionID: state.token, ApplicationID: applicationId, ApplicationVersion: applicationVersion])
-	response.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
-		locationName = LocationInfoBasic.LocationName
-		locationId = LocationInfoBasic.LocationID
-		locationMap["${locationName}"] = "${locationId}"
-	}//LocationInfoBasic.each    							
-
-	log.debug "This is map during Settings " + locationMap
+def findLocations() {
+    log.debug "Executed location discovery during setup"
 	
-    return locationMap
-}//locationFound()
+    tcCommandAsync("GetSessionDetails", [SessionID: state.token, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion])
+}//findLocations()
 
-Map getDeviceIDs(targetLocationId) {
-    log.debug "Executed DeviceID function during Setup"
-	if(targetLocationId == null) {
-    	log.debug "LocationID not yet defined"
-        return [:]
-    }
-    log.debug "TargetLocationID: ${targetLocationId}"
-    def locationId
-    String deviceName
-    String deviceClassId
-    String deviceId
-    Map deviceMap = [:]
-	
-    def response = tcCommand("GetSessionDetails", [SessionID: state.token, ApplicationID: applicationId, ApplicationVersion: applicationVersion])
-    
-    response.data.Locations.LocationInfoBasic.each { LocationInfoBasic ->
-		locationId = LocationInfoBasic.LocationID
-		if(locationId == targetLocationId) {
-        	//deviceId = LocationInfoBasic.SecurityDeviceID
-            LocationInfoBasic.DeviceList.DeviceInfoBasic.each { DeviceInfoBasic ->
-				//deviceName = DeviceInfoBasic.DeviceName
-				deviceClassId = DeviceInfoBasic.DeviceClassID
-                deviceId = DeviceInfoBasic.DeviceID
-				//deviceMap.put(deviceName, deviceId)
-                deviceMap.put(deviceClassId, deviceId)
-			}//iterate throught DeviceIDs
-		}//Only get DeviceIDs for the desired location
-	}//LocationInfoBasic.each
-    
-	log.debug "DeviceID map is " + deviceMap
-    
-  	return deviceMap
-} // Should return Map of Devices associated to the given location
+def findSensorDevices() {
+	log.debug "Executing sensor device discovery during setup"
 
-def discoverSensors() {
-    def sensors = [:]
+    tcCommandAsync("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1])
+}//findSensorDevices()
 
-    def response = tcCommand("GetPanelMetaDataAndFullStatusEx", [SessionID: state.token, LocationID: settings.locationId, LastSequenceNumber: 0, LastUpdatedTimestampTicks: 0, PartitionID: 1])
-    response.data.PanelMetadataAndStatus.Zones.ZoneInfo.each { ZoneInfo ->
-		//zoneID = ZoneInfo.'@ZoneID'
-		//zoneName = ZoneInfo.'@ZoneDescription'
-    	//zoneType //needs to come from input
-		sensors[ZoneInfo.'@ZoneID'] = [id: "${ZoneInfo.'@ZoneID'}", name: "${ZoneInfo.'@ZoneDescription'}"]
-	}//iterate through zones				
+def findAutomationDevices() {
+	log.debug "Executing automation discovery during setup"
 
-	log.debug "TotalConnect2.0 SM:  ${sensors.size()} sensors found"
-    //log.debug sensors
-
-	state.sensors = sensors
-} //Should discover sensor information and save to state
+	tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: ''])
+}//findAutomationDevices()
 
 Map sensorsDiscovered() {
 	def sensors =  state.sensors //needs some error checking likely
@@ -316,27 +283,6 @@ Map sensorsDiscovered() {
 	return map
 }//returns list of sensors for preferences page
 
-// Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
-def discoverSwitches() {
-    def switches = [:]
-	
-	def response = tcCommand("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: ''])
-   	response.data.AutomationData.AutomationSwitch.SwitchInfo.each { SwitchInfo ->
-		//switchID = SwitchInfo.SwitchID
-		//switchName = SwitchInfo.SwitchName
-		//switchType = SwitchInfo.SwitchType
-		//switchIcon = SwitchInfo.SwitchIconID // 0-Light, 1-Switch, 255-Garage Door, maybe use for default?
-		//switchState = SwitchInfo.SwitchState // 0-Off, 1-On, maybe set initial value?
-		//switchLevel = SwitchInfo.SwitchLevel // 0-99, maybe to set intial value?
-		switches[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", name: "${SwitchInfo.SwitchName}", type: "${SwitchInfo.SwitchType}"] //use "${var}" to typecast into String
-	}//iterate through Switches				
-
-	log.debug "TotalConnect2.0 SM:  ${switches.size()} switches found"
-    //log.debug switches
-
-	state.switches = switches
-} //Should discover switch information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
-
 Map switchesDiscovered() {
 	def switches =  state.switches //needs some error checking likely
 	def map = [:]
@@ -351,23 +297,6 @@ Map switchesDiscovered() {
 	return map
 }//returns list of switches for preferences page
 
-// Discovers Thermostat Devices
-def discoverThermostats() {
-	def thermostats = [:]
-
-	def response = tcCommand("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: ''])
-    response.data.AutomationData.AutomationThermostat.ThermostatInfo.each { ThermostatInfo ->
-		//thermostatID = ThermostatInfo.ThermostatID
-		//thermostatName = ThermostatInfo.ThermostatName
-        thermostats[ThermostatInfo.ThermostatID] = [id: "${ThermostatInfo.ThermostatID}", name: "${ThermostatInfo.ThermostatName}"] //use "${var}" to typecast into String
-	}//ThermostatInfo.each    							
-
-	log.debug "TotalConnect2.0 SM:  ${thermostats.size()} thermostats found"
-    //log.debug thermostatMap
-
-	state.thermostats = thermostats
-} //Should return thermostat information
-
 Map thermostatsDiscovered() {
 	def thermostats = state.thermostats
     def map = [:]
@@ -381,23 +310,6 @@ Map thermostatsDiscovered() {
     //log.debug "Thermostat Options: " + map
 	return map
 }//thermostatsDiscovered()    
-    
-// Discovers Lock Devices
-def discoverLocks() {
-	def locks = [:]
-
-	def response = tcCommand("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: automationDeviceId, AdditionalInput: ''])
-   	response.data.AutomationData.AutomationLock.LockInfo_Transitional.each { LockInfo_Transitional ->
-		//lockID = LockInfo_Transitional.LockID
-		//lockName = LockInfo_Transitional.LockName
-		locks[LockInfo_Transitional.LockID] = [id: "${LockInfo_Transitional.LockID}", name: "${LockInfo_Transitional.LockName}"] //use "${var}" to typecast into String
-	}//iterate through Locks
-    
-	log.debug "TotalConnect2.0 SM:  ${locks.size()} locks found"
-    //log.debug locks
-
-	state.locks = locks
-} //Should discover locks information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
 
 Map locksDiscovered() {
 	def locks =  state.locks //needs some error checking likely
@@ -413,51 +325,26 @@ Map locksDiscovered() {
 	return map
 }//returns list of locks for preferences page
 
-
 /////////////////////////////////////
 // TC2.0 Authentication Methods
 /////////////////////////////////////
 
 // Login Function. Returns SessionID for rest of the functions (doesn't seem to test if login is incorrect...)
 def login() {
-    log.debug "Executed login"
-	String token
-    
-    def paramsLogin = [
-    	uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/AuthenticateUserLogin",
-    	body: [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion]
-    	]
-	httpPost(paramsLogin) { response ->
-    	token = response.data.SessionID 
-	}
+    log.debug "Executing login"
+	
+    tcCommandAsync("AuthenticateUserLogin", [userName: settings.userName , password: settings.password, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion])
 
-	state.tokenRefresh = now()
-	String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
-	log.debug "Smart Things has logged in at ${refreshDate} SessionID: ${token}" 
-    
-    return token
-} // Returns token      
+    //return token
+} // Used to return token        
 
 // Keep Alive Command to keep session alive to reduce login/logout calls.  Keep alive does not confirm it worked so we will use GetSessionDetails instead.
 // Currently there is no check to see if this is needed.  Logic for if keepAlive is needed would be state.token != null && now()-state.tokenRefresh < 240000.
 // This works on tested assumption token is valid for 4 minutes (240000 milliseconds)
 def keepAlive() {
 	log.debug "KeepAlive.  State.token: '" + state.token + "'"
-    String resultCode
-    String resultData
-    
-    def response = tcCommand("GetSessionDetails", [SessionID: state.token, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion])
-	
-    //this check code is redundant
-    resultCode = response.data.ResultCode
-	
-    if(resultCode == "0") {
-		String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
-        log.debug "Session kept alive at ${refreshDate}"
-        //tokenRefresh already updated
-	} else {
-    	log.debug "Session keep alive failed at ${refreshDate}"
-    }//doublecheck this worked
+
+    tcCommandAsync("GetSessionDetails", [SessionID: state.token, ApplicationID: settings.applicationId, ApplicationVersion: settings.applicationVersion])
 }//keepAlive
 
 def isTokenValid() {
@@ -476,16 +363,9 @@ def isTokenValid() {
 
 // Logout Function. Called after every mutational command. Ensures the current user is always logged Out.
 def logout() {
-        log.debug "During logout - ${state.token}"
-   		def paramsLogout = [
-    			uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/Logout",
-    			body: [SessionID: state.token]
-    			]
-   				httpPost(paramsLogout) { responseLogout ->
-        		log.debug "Smart Things has successfully logged out"
-        	}
-       state.token = null
-       state.tokenRefresh = null
+	log.debug "During logout - ${state.token}"
+  
+	tcCommandAsync("Logout", [SessionID: state.token])
 }
 
 /////////////////////////////////////
@@ -493,8 +373,13 @@ def logout() {
 /////////////////////////////////////
 
 def initialize() {
-    state.token = login()
-    log.debug "Initialize.  Login produced token: " + state.token
+    state.setup = false
+    
+    if(!isTokenValid()) {
+    	login()
+    }//if we don't have a valid login token (we should, from setup unless we took forever
+    pause(3000)
+    log.debug "Initialize" //Login produced token: " + state.token
     
 // Combine all selected devices into 1 variable to make sure we have devices and to deleted unused ones
 	state.selectedDevices = (settings.zoneDevices?:[]) + (settings.automationDevices?:[]) + (settings.thermostatDevices?:[]) + (settings.lockDevices?:[])
@@ -523,7 +408,7 @@ def initialize() {
 	state.zoneStatusRefresh = 0L
 	state.automationStatusRefresh = 0L
     
-    pollChildren()
+    //pollChildren()
 
 	if (settings.alarmDevice && settings.shmIntegration) {
 		log.debug "Setting up SHM + TC Alarm Integration"     
@@ -840,8 +725,11 @@ def addDevices() {
             if(!d) {
             	def newLock
                 newLock = locks.find { ("TC-${settings.automationDeviceId}-${it.value.id}") == dni }
-
-//				d = addChildDevice("jhstroebel", "TotalConnect Lock", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newLock?.value.name}", completedSetup: true])
+				
+                log.debug "dni: ${dni}"
+                log.debug "newLock: ${newLock}"
+                
+				d = addChildDevice("jhstroebel", "TotalConnect Lock", dni, null /*Hub ID*/, [name: "Device.${dni}", label: "${newLock?.value.name}", completedSetup: true])
 			}//if it doesn't already exist
        	}//for each selected lock
 	}//if there are lockDevices
@@ -959,13 +847,22 @@ def controlSwitch(childDevice, int switchAction) {
 	tcCommandAsync("ControlASwitch", [SessionID: state.token, DeviceID: deviceId, SwitchID: switchId, SwitchAction: switchAction])
 }//controlSwitch
 
+def controlLock(childDevice, int lockDesiredState) {		   
+	def childDeviceInfo = childDevice.getDeviceNetworkId().split("-") //takes deviceId & switchId from deviceNetworkID in format "TC-DeviceID-SwitchID"
+    def deviceId = childDeviceInfo[1]
+	def lockId = childDeviceInfo[2]
+
+	tcCommandAsync("ControlALock", [SessionID: state.token, DeviceID: deviceId, LockID: lockId, LockDesiredState: lockDesiredState, AuthorizingCode: ""])
+}//controlSwitch
+
 def pollChildren(childDevice = null) {
 	//log.debug "pollChildren() - forcePoll: ${state.forcePoll}, lastPoll: ${state.lastPoll}, now: ${now()}"
     
 	if(!isTokenValid())
     {
     	log.error "Token is likely expired.  Check Keep alive function in SmartApp"
-        state.token = login().toString()
+        login()
+        pause(1000)
     }//check if token is likely still valid or login.  Might add a sendCommand(command) method and check before sending any commands...
    
     if(childDevice == null) {
@@ -987,7 +884,7 @@ def pollChildren(childDevice = null) {
         	//update automationDevices
             tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
             //state.switchStatus = automationDeviceStatus()
-            //updateSwitchStatuses()
+            //updateAutomationStatuses()
         }//automation devices are 1 call... if any exist update all 3 types
         
 		//updateStatuses()
@@ -1015,7 +912,7 @@ def pollChildren(childDevice = null) {
         	//its an automation device (for now below works, but when thermostats and locks are added, need more definition)
             tcCommandAsync("GetAllAutomationDeviceStatusEx", [SessionID: state.token, DeviceID: settings.automationDeviceId, AdditionalInput: ''])
             //state.switchStatus = automationDeviceStatus()
-            //updateSwitchStatuses()
+            //updateAutomationStatuses()
         }
         else {
         	log.error "deviceNetworkId is not formatted as expected.  ID: ${childDevice.getDeviceNetworkId()}"
@@ -1045,7 +942,7 @@ def updateAlarmStatus() {
 			def deviceID = "TC-${settings.securityDeviceId}"
 			def d = getChildDevice(deviceID)
 			def currentStatus = state.alarmStatus
-			                
+			            
 			switch(currentStatus) {
 				case "10211": //technically this is Disarmed w/ Zone Bypassed
 				case "10200":
@@ -1161,18 +1058,18 @@ def updateAlarmStatus() {
     }// try/catch block
 } //updateAlarmStatus()
 
-def updateSwitchStatuses() {    
+def updateAutomationStatuses() {    
 	def children = getChildDevices()    
-	def switchChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.automationDeviceId}-") }
+	def automationChildren = children?.findAll { it.deviceNetworkId.startsWith("TC-${settings.automationDeviceId}-") }
         
-	switchChildren.each { 
+	automationChildren.each { 
 		try {
 			//log.debug "(Switch) SmartThings State is: " + it.currentStatus
-			String switchId = it.getDeviceNetworkId().split("-")[2] //takes switchId from deviceNetworkID in format "TC-DeviceID-SwitchID"
+			String id = it.getDeviceNetworkId().split("-")[2] //takes switch/lock/thermostatId from deviceNetworkID in format "TC-DeviceID-ID"
             
-			if(state.switchStatus.containsKey(switchId)) {
+			if(state.switchStatus.containsKey(id)) {
             	def events = []
-				def switchState = state.switchStatus.get(switchId)
+				def switchState = state.switchStatus.get(id)
 				//log.debug "(Switch) Polled State is: ${switchState}"
                     
                 switch(switchState) {
@@ -1198,9 +1095,37 @@ def updateSwitchStatuses() {
                 }//switch(switchState)
                 
                 it.generateEvent(events)
-            }//if(state.switchState.containsKey(switchId)
+            } else if(state.lockStatus?.containsKey(id)) {
+            	def events = []
+				def lockState = state.lockStatus.get(id)
+				//log.debug "(Lock) Polled State is: ${lockState}"
+                    
+                switch(lockState) {
+                    case "0":
+                        //log.debug "Status is: Unlocked"
+                        if(it.currentStatus != "unlocked") {
+                            events << [name: "status", value: "unlocked", displayed: "true", description: "Refresh: Lock is Unlocked", isStateChange: "true"]
+                            events << [name: "switch", value: "off", displayed: "false", description: "Refresh: Lock is Unlocked", isStateChange: "true"]
+                            //sendEvent(it, [name: "status", value: "closed", displayed: "true", description: "Refresh: Lock is Unlocked", isStateChange: "true"])
+                        }
+                        break
+                    case "1":
+                        //log.debug "Status is: Locked"
+                        if(it.currentStatus != "locked") {
+                        	events << [name: "status", value: "locked", displayed: "true", description: "Refresh: Lock is Locked", isStateChange: "true"]
+							events << [name: "switch", value: "on", displayed: "false", description: "Refresh: Lock is Locked", isStateChange: "true"]
+                            //sendEvent(it, [name: "status", value: "open", displayed: "true", description: "Refresh: Lock is Locked", isStateChange: "true"])
+                        }
+                        break
+                    default:
+                        log.error "Attempted to update lockState to ${lockState}. Only valid states are 0 or 1."
+                        break
+                }//switch(lockState)
+                
+                it.generateEvent(events)
+            }//if(state.lockState.containsKey(lockId)
             else {
-                log.error "SwitchId ${switchId} does not exist"
+                log.error "${id} does not exist as a SwitchID or LockID."
             }
         } catch (e) {
             log.error("Error Occurred Updating Device " + it.displayName + ", Error " + e)
@@ -1281,74 +1206,9 @@ def updateZoneStatuses() {
 	return true
 }//updateZoneStatuses()
 
-def tcCommand(String path, Map body, Integer retry = 0) {
-	def response
-    def resultCode
-    def resultData
-    
-	def params = [
-		uri: "https://rs.alarmnet.com/TC21API/TC2.asmx/",	
-		path: path,
-    	body: body
-    ]
-
-    try {
-    	httpPost(params) { resp ->
-        	response = resp
-			//response = resp.data //could breakout data, but we're only using .data here and want to change as little code a possible to implement
-        }//Post Command
-        
-		resultCode = response.data.ResultCode
-        resultData = response.data.ResultData
-		
-		if(resultCode == "0") {
-            state.tokenRefresh = now() //we ran a successful command, that will keep the token alive
-			//String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
-			//log.debug "Session kept alive at ${refreshDate}"
-		} else if(resultCode == "4500") {
-        	//this was an arm action which returns this code instead of a status, it sent the command
-			state.tokenRefresh = now() //we ran a successful command, that will keep the token alive
-        } else if(resultCode == "-102") {
-        	//this means the Session ID is invalid, needs to login and try again
-            log.error "Command: ${path} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
-            log.debug "Attempting to refresh token and try again"
-            state.token = login().toString()
-            pause(1000) //pause should allow login to complete before trying again.
-			response = tcCommand(path, body)
-		} else if(resultCode == "4101") {
-        	//this happens sometimes, especially for the zone data... should retry... normally works?
-            log.error "Command: ${path} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
-		/* Retry causes goofy issues...		
-            if(retry == 0) {
-            	pause(2000) //pause 2 seconds (otherwise this hits our rate limit)
-           		retry += 1
-                response = tcCommand(path, body, retry)
-            }//retry after 3 seconds if we haven't retried before
-		*/
-        // -4002 - The specified location is not valid
-        // 
-        
-        } else {
-        	//error code we haven't seen or expected, we won't do anything
-            log.error "Command: ${path} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
-        }//If result is good, refresh token, if not, try and handle, if its not a code we've seen, throw an error to the log
-        
-    } catch (SocketTimeoutException e) {
-        //identify a timeout and retry?
-		log.error "Timeout Error: $e"
-	/* Retry causes goofy issues...		
-        if(retry == 0) {
-        	pause(2000) //pause 2 seconds (otherwise this hits our rate limit)
-           	retry += 1
-            response = tcCommand(path, body, retry)
-		}//retry after 5 seconds if we haven't retried before
-	*/
-    } catch (e) {
-    	log.error "Something unexpected went wrong: $e"
-	}//try / catch for httpPost
-
-    return response
-}//post command to catch any issues and possibly retry command
+/////////////////////////////////////
+// ASYNC Code & Methods
+/////////////////////////////////////
 
 def tcCommandAsync(String path, Map body, Integer retry = 0) {
 	String stringBody = ""
@@ -1372,14 +1232,35 @@ def tcCommandAsync(String path, Map body, Integer retry = 0) {
     def handler
         
     switch(path) {
-    	case "GetPanelMetaDataAndFullStatusEx":
-        	handler = "panel"
+    	case "AuthenticateUserLogin":
+        	handler = "login"
+            break
+        case "Logout":
+        	handler = "logout"
+            break
+        case "GetSessionDetails":
+        	if(state.setup) {
+        		handler = "sessionDetails"
+            } else {
+            	handler = "keepAlive"
+            }//we're looking to keep authentication alive
+            break
+        case "GetPanelMetaDataAndFullStatusEx":
+            if(state.setup) {
+            	handler = "sensorDiscovery"
+            } else {
+            	handler = "panel"
+            }//we're looking to update automation devices
             break
         case "GetZonesListInStateEx":
         	handler = "zone"
             break
         case "GetAllAutomationDeviceStatusEx":
-        	handler = "automation"
+        	if(state.setup) {
+            	handler = "automationDiscovery"
+            } else {
+            	handler = "automation"
+            }//we're looking to update automation devices
             break
         default:
         	handler = "none"
@@ -1400,10 +1281,6 @@ def tcCommandAsync(String path, Map body, Integer retry = 0) {
     	log.error "Something unexpected went wrong in tcCommandAsync: $e"
 	}//try / catch for asynchttpPost
 }//async post command
-
-/////////////////////////////////////
-// ASYNC Code & Methods
-/////////////////////////////////////
 
 def asyncResponse(response, data) {
     if (response.hasError()) {
@@ -1429,6 +1306,8 @@ def asyncResponse(response, data) {
     	def resultCode = response.ResultCode
         def resultData = response.ResultData
         
+        //log.debug "ResultCode: ${resultCode}, ResultData: ${resultData}"
+        
         switch(resultCode) {
         	case "0": //Successful Command
             case "4500": //Successful Command for Arm Action
@@ -1436,6 +1315,30 @@ def asyncResponse(response, data) {
                 
                 //log.debug "Handler: ${data.get('handler')}"
 				switch(data.get('handler')) {
+					//authentication cases
+                    case "login":
+                        state.token = response?.SessionID.toString()
+                        state.tokenRefresh = now()
+						String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
+						log.debug "Smart Things has logged in at ${refreshDate} SessionID: ${state.token}"
+                        break
+                    case "logout":
+						log.debug "Smart Things has successfully logged out"
+						state.token = null
+						state.tokenRefresh = null
+                        break
+                    //setup cases
+                    case "sessionDetails":
+                        getPanelInfo(response)
+                        break
+                    case "sensorDiscovery":
+						discoverSensors(response)
+                    	break
+                    case "automationDiscovery":
+						discoverSwitches(response)
+						discoverThermostats(response)
+						discoverLocks(response)
+                    	break
                     //update cases
                     case "panel":
                         state.alarmStatus = getAlarmStatus(response)
@@ -1447,9 +1350,13 @@ def asyncResponse(response, data) {
                         break
                     case "automation":
                         state.switchStatus = getAutomationDeviceStatus(response)
-                        updateSwitchStatuses()
+						//state.lockStatus = get
+                        updateAutomationStatuses()
                         break
-                    //case "keepAlive":
+                    case "keepAlive":
+                        String refreshDate = new Date(state.tokenRefresh).format("EEE MMM d HH:mm:ss Z",  location.timeZone)
+						log.debug "Session kept alive at ${refreshDate}"
+                        break
                     default:
                         //if its not an update method or keepAlive we don't return anything
                         return
@@ -1460,7 +1367,7 @@ def asyncResponse(response, data) {
 	        	//this means the Session ID is invalid, needs to login and try again
     	        log.error "Command Type: ${data} failed with ResultCode: ${resultCode} and ResultData: ${resultData}"
         	    log.debug "Attempting to refresh token and try again"
-            	state.token = login().toString()
+            	login()
             	pause(1000) //pause should allow login to complete before trying again.
 				tcCommandAsync(data.get('path'), data.get('body')) //we don't send retry as 1 since it was a login failure
                 break
@@ -1493,6 +1400,100 @@ def asyncResponse(response, data) {
     	log.error "Something unexpected went wrong in asyncResponse: $e"
 	}//try / catch for httpPost
 }//asyncResponse
+
+def getPanelInfo(response) {
+	//getLocationID & DeviceIDs in same call for setup
+	def locationId
+	def locationName
+	state.locationMap = [:]
+	
+	String deviceClassId
+	String deviceId
+	state.deviceMap = [:]
+						
+	response.Locations.LocationInfoBasic.each { LocationInfoBasic ->
+		def tempMap = [:]
+		locationName = LocationInfoBasic.LocationName
+		locationId = LocationInfoBasic.LocationID
+		state.locationMap["${locationName}"] = "${locationId}"
+		//additional code to save DeviceIDs
+		LocationInfoBasic.DeviceList.DeviceInfoBasic.each { DeviceInfoBasic ->
+			deviceClassId = DeviceInfoBasic.DeviceClassID
+			deviceId = DeviceInfoBasic.DeviceID
+			tempMap.put(deviceClassId, deviceId)
+		}//iterate throught DeviceIDs
+		state.deviceMap.put(locationId, tempMap)
+	}//LocationInfoBasic.each
+}//getPanelInfo()
+
+//Discovers Sensors from cloud
+def discoverSensors(response) {
+    def sensors = [:]
+
+	response.PanelMetadataAndStatus.Zones.ZoneInfo.each { ZoneInfo ->
+		//zoneID = ZoneInfo.'@ZoneID'
+		//zoneName = ZoneInfo.'@ZoneDescription'
+    	//zoneType //needs to come from input
+		sensors[ZoneInfo.'@ZoneID'] = [id: "${ZoneInfo.'@ZoneID'}", name: "${ZoneInfo.'@ZoneDescription'}"]
+	}//iterate through zones				
+
+	log.debug "TotalConnect2.0 SM:  ${sensors.size()} sensors found"
+    //log.debug sensors
+
+	state.sensors = sensors
+} //Should discover sensor information and save to state
+
+// Discovers Switch Devices (Switches, Dimmmers, & Garage Doors)
+def discoverSwitches(response) {
+    def switches = [:]
+	
+   	response.AutomationData.AutomationSwitch.SwitchInfo.each { SwitchInfo ->
+		//switchID = SwitchInfo.SwitchID
+		//switchName = SwitchInfo.SwitchName
+		//switchType = SwitchInfo.SwitchType
+		//switchIcon = SwitchInfo.SwitchIconID // 0-Light, 1-Switch, 255-Garage Door, maybe use for default?
+		//switchState = SwitchInfo.SwitchState // 0-Off, 1-On, maybe set initial value?
+		//switchLevel = SwitchInfo.SwitchLevel // 0-99, maybe to set intial value?
+		switches[SwitchInfo.SwitchID] = [id: "${SwitchInfo.SwitchID}", name: "${SwitchInfo.SwitchName}", type: "${SwitchInfo.SwitchType}"] //use "${var}" to typecast into String
+	}//iterate through Switches				
+
+	log.debug "TotalConnect2.0 SM:  ${switches.size()} switches found"
+    //log.debug switches
+
+	state.switches = switches
+} //Should discover switch information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
+
+// Discovers Thermostat Devices
+def discoverThermostats(response) {
+	def thermostats = [:]
+
+    response.AutomationData.AutomationThermostat.ThermostatInfo.each { ThermostatInfo ->
+		//thermostatID = ThermostatInfo.ThermostatID
+		//thermostatName = ThermostatInfo.ThermostatName
+        thermostats[ThermostatInfo.ThermostatID] = [id: "${ThermostatInfo.ThermostatID}", name: "${ThermostatInfo.ThermostatName}"] //use "${var}" to typecast into String
+	}//ThermostatInfo.each    							
+
+	log.debug "TotalConnect2.0 SM:  ${thermostats.size()} thermostats found"
+    //log.debug thermostatMap
+
+	state.thermostats = thermostats
+} //Should return thermostat information
+
+// Discovers Lock Devices
+def discoverLocks(response) {
+	def locks = [:]
+
+   	response.AutomationData.AutomationLock.LockInfo_Transitional.each { LockInfo_Transitional ->
+		//lockID = LockInfo_Transitional.LockID
+		//lockName = LockInfo_Transitional.LockName
+		locks[LockInfo_Transitional.LockID] = [id: "${LockInfo_Transitional.LockID}", name: "${LockInfo_Transitional.LockName}"] //use "${var}" to typecast into String
+	}//iterate through Locks
+    
+	log.debug "TotalConnect2.0 SM:  ${locks.size()} locks found"
+    //log.debug locks
+
+	state.locks = locks
+} //Should discover locks information and save to state (could combine all automation to turn 3 calls into 1 or pass XML section for each type to discovery...)
 
 // Gets Panel Metadata.
 def getAlarmStatus(response) {
@@ -1558,7 +1559,7 @@ Map getAutomationDeviceStatus(response) {
 
         //log.debug "SwitchID: SwitchState " + automationMap
 	/*		
-		response.data.AutomationData.AutomationThermostat.ThermostatInfo.each
+		response.AutomationData.AutomationThermostat.ThermostatInfo.each
         {
             ThermostatInfo ->
                 automationMap[ThermostatInfo.ThermostatID] = [
@@ -1575,17 +1576,23 @@ Map getAutomationDeviceStatus(response) {
                     batteryState: ThermostatInfo.BatteryState]
         }//ThermostatInfo.each
     */
-    
-	/*		
-		response.data.AutomationData.AutomationLock.LockInfo_Transitional.each
+        
+        String lockID
+        String lockState
+        String batteryState
+    	Map automationMap2 = [:]
+        
+		response.AutomationData.AutomationLock.LockInfo_Transitional.each
         {
             LockInfo_Transitional ->
-                automationMap[LockInfo_Transitional.LockID] = [
-                    lockID: LockInfo_Transitional.LockID,
-                    lockState: LockInfo_Transitional.LockState,
-                    batteryState: LockInfo_Transitional.BatteryState]                    ]
+                lockID = LockInfo_Transitional.LockID
+                lockState = LockInfo_Transitional.LockState
+                batteryState = LockInfo_Transitional.BatteryState
+                automationMap2.put(lockID,lockState)
         }//LockInfo_Transitional.each
-    */
+        
+        state.lockStatus = automationMap2
+    
 	} catch (e) {
       	log.error("Error Occurred Updating Automation Devices: " + e)
 	}// try/catch block
